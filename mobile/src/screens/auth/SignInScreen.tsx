@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Image } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../utils/supabase';
 import { registerForPushNotificationsAsync } from '../../utils/pushNotifications';
@@ -62,6 +62,7 @@ export const SignInScreen = ({ navigation }: any) => {
                 <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
                     <View style={styles.headerContainer}>
+                        <Image source={require('../../../assets/logo.png')} style={styles.logo} />
                         <Text style={styles.headerTitle}>Welcome Back</Text>
                         <Text style={styles.subtext}>Sign in to continue to ShipMate</Text>
                     </View>
@@ -162,6 +163,15 @@ const styles = StyleSheet.create({
     },
     headerContainer: {
         marginBottom: 40,
+        alignItems: 'center',
+    },
+    logo: {
+        width: 80,
+        height: 80,
+        borderRadius: 16,
+        marginBottom: 16,
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.1)',
     },
     headerTitle: {
         fontSize: 36,

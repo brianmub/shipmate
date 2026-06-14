@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, StatusBar, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export const WelcomeScreen = ({ navigation }: any) => {
@@ -13,6 +13,7 @@ export const WelcomeScreen = ({ navigation }: any) => {
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             <SafeAreaView style={styles.safeArea}>
                 <View style={styles.header}>
+                    <Image source={require('../../../assets/logo.png')} style={styles.logo} />
                     <Text style={styles.title}>ShipMate</Text>
                     <Text style={styles.subtitle}>Your Delivery & Errands Marketplace</Text>
                 </View>
@@ -57,8 +58,16 @@ const styles = StyleSheet.create({
         paddingBottom: 40,
     },
     header: {
-        marginTop: 120,
+        marginTop: 80,
         alignItems: 'center',
+    },
+    logo: {
+        width: 140,
+        height: 140,
+        borderRadius: 28,
+        marginBottom: 20,
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.1)',
     },
     title: {
         fontSize: 48,
