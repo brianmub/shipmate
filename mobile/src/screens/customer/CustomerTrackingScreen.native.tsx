@@ -1,20 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, StatusBar, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, StatusBar, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../../utils/supabase';
-import { orderService } from '../../services/orderService';
-import { OfferSelectionPanel } from '../../components/OfferSelectionPanel';
 
 export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     const { orderId } = route.params;
     const [order, setOrder] = useState<any>(null);
-    const [offers, setOffers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [offersLoading, setOffersLoading] = useState(false);
-    const [previewDriver, setPreviewDriver] = useState<any>(null);
+    const [viewingCouriers, setViewingCouriers] = useState<any[]>([]);
     const mapRef = useRef<MapView>(null);
 
     const fetchOrder = async () => {
@@ -30,38 +26,8 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
 
             if (error) throw error;
             setOrder(data);
-            
-            // If order is pending, fetch offers
-            if (data.status === 'pending') {
-                fetchOffers();
-            }
         } catch (error: any) {
             console.error('Error fetching tracking order:', error.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const fetchOffers = async () => {
-        setOffersLoading(true);
-        try {
-            const data = await orderService.getOrderOffers(orderId);
-            setOffers(data || []);
-        } catch (error) {
-            console.error('Error fetching offers:', error);
-        } finally {
-            setOffersLoading(false);
-        }
-    };
-
-    const handleAcceptOffer = async (offer: any) => {
-        setLoading(true);
-        try {
-            await orderService.acceptOffer(orderId, offer.id, offer.driver_id);
-            Alert.alert('Courier Assigned', 'Your courier is on the way!');
-            fetchOrder(); // Refresh to show driver details
-        } catch (error: any) {
-            Alert.alert('Error', error.message);
         } finally {
             setLoading(false);
         }
@@ -77,17 +43,29 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
             })
             .subscribe();
 
-        // Subscribe to new offers
-        const offersChannel = supabase
-            .channel(`public:offers_${orderId}`)
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_offers', filter: `order_id=eq.${orderId}` }, (payload) => {
-                fetchOffers();
+        const presenceChannel = supabase.channel(`order_viewers:${orderId}`);
+        presenceChannel
+            .on('presence', { event: 'sync' }, () => {
+                const state = presenceChannel.presenceState();
+                const couriers: any[] = [];
+                Object.keys(state).forEach((key) => {
+                    state[key].forEach((presence: any) => {
+                        if (presence.user) {
+                            couriers.push(presence.user);
+                        }
+                    });
+                });
+                // Deduplicate by ID
+                const uniqueCouriers = couriers.filter(
+                    (c, index, self) => self.findIndex((t) => t.id === c.id) === index
+                );
+                setViewingCouriers(uniqueCouriers);
             })
             .subscribe();
 
         return () => {
             supabase.removeChannel(channel);
-            supabase.removeChannel(offersChannel);
+            supabase.removeChannel(presenceChannel);
         };
     }, [orderId]);
 
@@ -166,11 +144,11 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                         />
                     )}
 
-                    {/* Render Real-Time Driver Location (if assigned) */}
+                    {/* Render Real-Time Driver Location */}
                     {driver_latitude && driver_longitude && (
                         <Marker
                             coordinate={{ latitude: driver_latitude, longitude: driver_longitude }}
-                            title="Your Courier"
+                            title="Driver"
                         >
                             <View style={styles.driverMarkerOuter}>
                                 <View style={styles.driverMarkerInner}>
@@ -178,36 +156,6 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                 </View>
                             </View>
                         </Marker>
-                    )}
-
-                    {/* Render Preview Driver (if offer selected) */}
-                    {previewDriver && order.status === 'pending' && (
-                        <Marker
-                            coordinate={{ 
-                                latitude: previewDriver.driver_latitude, 
-                                longitude: previewDriver.driver_longitude 
-                            }}
-                            title="Potential Courier"
-                        >
-                            <View style={[styles.driverMarkerOuter, { backgroundColor: 'rgba(59, 130, 246, 0.3)' }]}>
-                                <View style={styles.driverMarkerInner}>
-                                    <Text style={{ fontSize: 20 }}>🚛</Text>
-                                </View>
-                            </View>
-                        </Marker>
-                    )}
-
-                    {/* Render visual line between preview driver and pickup */}
-                    {previewDriver && order.status === 'pending' && pickup_latitude && pickup_longitude && (
-                        <Polyline
-                            coordinates={[
-                                { latitude: previewDriver.driver_latitude, longitude: previewDriver.driver_longitude },
-                                { latitude: parseFloat(pickup_latitude), longitude: parseFloat(pickup_longitude) }
-                            ]}
-                            strokeColor="#3B82F6"
-                            strokeWidth={2}
-                            lineDashPattern={[5, 5]}
-                        />
                     )}
                 </MapView>
             </View>
@@ -238,29 +186,48 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                             <View>
                                 <Text style={styles.jobType}>{isDelivery ? 'Package Delivery' : 'Errand'}</Text>
                                 <Text style={styles.statusText}>
-                                    {order.status === 'pending' ? 'Searching for a courier...' :
-                                     order.status === 'driver_assigned' ? 'Courier assigned & coming' :
-                                     order.status === 'en_route_to_pickup' ? 'Heading to pickup' :
-                                     order.status === 'arrived_at_pickup' ? 'Courier is at pickup' :
-                                     order.status === 'picked_up' ? 'Package picked up' :
-                                     order.status === 'en_route_to_delivery' ? 'Heading to you' :
-                                     order.status === 'arrived_at_delivery' ? 'Courier is at destination' :
-                                     order.status === 'delivered' ? 'Order Completed' : 
-                                     order.status.replace(/_/g, ' ')}
+                                    {order.status === 'in_progress' ? 'Driver is on the way' :
+                                        order.status === 'accepted' ? 'Driver is heading to pickup' :
+                                            order.status === 'completed' ? 'Delivered' : 'Pending'}
                                 </Text>
                             </View>
                         </View>
 
-                        {order.status === 'pending' && (
-                            <OfferSelectionPanel 
-                                offers={offers} 
-                                loading={offersLoading}
-                                onAccept={handleAcceptOffer}
-                                onSelect={(offer) => setPreviewDriver(offer)}
-                            />
-                        )}
-
-                        {order.status !== 'pending' && (
+                        {order.status === 'pending' ? (
+                            <View style={styles.viewersCard}>
+                                <View style={styles.viewersHeader}>
+                                    <ActivityIndicator size="small" color="#F59E0B" style={{ marginRight: 8 }} />
+                                    <Text style={styles.viewersTitle}>Searching for Couriers...</Text>
+                                </View>
+                                <Text style={styles.viewersSubtitle}>
+                                    We are finding nearby drivers for your {isDelivery ? 'delivery' : 'errand'}.
+                                </Text>
+                                <View style={styles.viewersSeparator} />
+                                {viewingCouriers.length > 0 ? (
+                                    <View>
+                                        <Text style={styles.viewingCountText}>
+                                            👀 {viewingCouriers.length} courier{viewingCouriers.length > 1 ? 's' : ''} currently viewing your offer:
+                                        </Text>
+                                        {viewingCouriers.map((courier) => (
+                                            <View key={courier.id} style={styles.courierRow}>
+                                                <View style={styles.courierAvatarSmall}>
+                                                    <Text style={styles.courierAvatarSmallText}>
+                                                        {courier.full_name?.charAt(0).toUpperCase() || 'C'}
+                                                    </Text>
+                                                </View>
+                                                <Text style={styles.courierNameText}>
+                                                    {courier.full_name} is reviewing details
+                                                </Text>
+                                            </View>
+                                        ))}
+                                    </View>
+                                ) : (
+                                    <Text style={styles.waitingText}>
+                                        🔍 Waiting for couriers to inspect details...
+                                    </Text>
+                                )}
+                            </View>
+                        ) : (
                             <View style={styles.driverInfoCard}>
                                 <View style={styles.driverAvatar}>
                                     <Text style={styles.driverAvatarText}>{driverName.charAt(0).toUpperCase()}</Text>
@@ -372,5 +339,82 @@ const styles = StyleSheet.create({
     },
     contactIcon: {
         fontSize: 20,
+    },
+
+    viewersCard: {
+        backgroundColor: 'rgba(255, 255, 255, 0.85)',
+        borderRadius: 20,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(245, 158, 11, 0.3)',
+        marginBottom: Platform.OS === 'ios' ? 0 : 20,
+        shadowColor: '#F59E0B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    viewersHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+    viewersTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#D97706',
+    },
+    viewersSubtitle: {
+        fontSize: 13,
+        color: '#64748B',
+        marginBottom: 12,
+        lineHeight: 18,
+    },
+    viewersSeparator: {
+        height: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.05)',
+        marginBottom: 12,
+    },
+    viewingCountText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#475569',
+        marginBottom: 8,
+    },
+    courierRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        padding: 10,
+        borderRadius: 12,
+        marginBottom: 6,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.02)',
+    },
+    courierAvatarSmall: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: '#F59E0B',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    courierAvatarSmallText: {
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontWeight: 'bold',
+    },
+    courierNameText: {
+        fontSize: 13,
+        color: '#1E293B',
+        fontWeight: '500',
+    },
+    waitingText: {
+        fontSize: 13,
+        color: '#94A3B8',
+        fontStyle: 'italic',
+        textAlign: 'center',
+        paddingVertical: 8,
     },
 });

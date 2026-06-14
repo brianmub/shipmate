@@ -7,6 +7,8 @@ import { useAuthStore } from '../../store/authStore';
 import { useOrderStore } from '../../store/orderStore';
 import { orderService } from '../../services/orderService';
 import * as ImagePicker from 'expo-image-picker';
+import { aiService } from '../../services/aiService';
+import { userService } from '../../services/userService';
 
 export const CreateOrderScreen = ({ route, navigation }: any) => {
     const { 
@@ -25,6 +27,57 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
     // AI States
     const [isScanning, setIsScanning] = useState(false);
     const [suggestions, setSuggestions] = useState<string[]>([]);
+
+    // Pricing States
+    const [estimatedCost, setEstimatedCost] = useState(12.50);
+    const [pricingSettings, setPricingSettings] = useState<{ base_delivery_fee: number; per_km_rate: number } | null>(null);
+
+    // Fetch settings on load
+    useEffect(() => {
+        const fetchSettings = async () => {
+            try {
+                const data = await userService.getSystemSettings();
+                if (data) {
+                    setPricingSettings({
+                        base_delivery_fee: parseFloat(data.base_delivery_fee || '5.00'),
+                        per_km_rate: parseFloat(data.per_km_rate || '1.50')
+                    });
+                }
+            } catch (err) {
+                console.error('Failed to load system settings for pricing:', err);
+            }
+        };
+        fetchSettings();
+    }, []);
+
+    // Calculate price dynamically when coords change
+    useEffect(() => {
+        const baseFee = pricingSettings?.base_delivery_fee ?? 5.00;
+        const perKmRate = pricingSettings?.per_km_rate ?? 1.50;
+
+        const startCoords = isDelivery ? pickupCoords : errandCoords;
+        const endCoords = dropoffCoords;
+
+        if (startCoords && endCoords) {
+            // Calculate Haversine distance
+            const R = 6371; // Earth radius in km
+            const dLat = (endCoords.latitude - startCoords.latitude) * Math.PI / 180;
+            const dLon = (endCoords.longitude - startCoords.longitude) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(startCoords.latitude * Math.PI / 180) * Math.cos(endCoords.latitude * Math.PI / 180) * 
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const distance = R * c;
+
+            // Compute fee: base fee + (distance * per km rate)
+            const calculatedCost = baseFee + (distance * perKmRate);
+            setEstimatedCost(Math.round(calculatedCost * 100) / 100);
+        } else {
+            // Default base fee if coordinates are not fully selected
+            setEstimatedCost(baseFee);
+        }
+    }, [pickupCoords, dropoffCoords, errandCoords, serviceType, pricingSettings]);
 
     // Auth & Loading State
     const { user } = useAuthStore();
@@ -102,27 +155,44 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
             allowsEditing: true,
             aspect: [4, 3],
             quality: 0.5,
+            base64: true,
         });
 
         if (!result.canceled) {
             setPackageImage(result.assets[0].uri);
-            performAIScan();
+            performAIScan(result.assets[0].base64 || undefined);
         }
     };
 
-    const performAIScan = () => {
+    const performAIScan = async (base64Image?: string) => {
+        if (!base64Image) {
+            Alert.alert('Scan Error', 'No image data captured.');
+            return;
+        }
         setIsScanning(true);
-        setTimeout(() => {
-            const estimates = ['Small Envelope', 'Medium Box', 'Large Parcel', 'Irregular Shape'];
-            const randomEstimate = estimates[Math.floor(Math.random() * estimates.length)];
-            setAIEstimate(randomEstimate);
-            setIsScanning(false);
+        try {
+            const result = await aiService.classifyPackage(base64Image);
+            setAIEstimate(result.size_category);
             
+            // Auto-populate dimensions in the description text field
+            const prefix = `[AI Dimensions: ${result.dimensions} | Est. Weight: ${result.estimated_weight}]`;
+            const newDesc = packageDescription ? `${prefix}\n${packageDescription}` : prefix;
+            setPackageDesc(newDesc);
+
             Alert.alert(
                 'AI Analysis Complete', 
-                `Our AI detected a ${randomEstimate}. We've updated your vehicle recommendation.`
+                `Our AI detected a ${result.size_category} (${result.dimensions}, ${result.estimated_weight}). We've updated your vehicle recommendation.`
             );
-        }, 2500);
+        } catch (error: any) {
+            console.error('Gemini classification error:', error);
+            Alert.alert(
+                'AI Scan Error', 
+                'We couldn\'t classify the package automatically. Defaulting to standard categories.'
+            );
+            setAIEstimate('Medium Box');
+        } finally {
+            setIsScanning(false);
+        }
     };
 
     const handlePlaceOrder = async () => {
@@ -140,7 +210,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
         try {
             if (!user) throw new Error("No user session found");
 
-            const { data, error } = await orderService.createOrder({
+            const createdOrder = await orderService.createOrder({
                 customer_id: user.id,
                 service_type: serviceType,
                 status: 'pending',
@@ -155,19 +225,18 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                 package_description: isDelivery ? packageDescription : null,
                 package_image_url: packageImage,
                 ai_size_estimate: aiEstimate,
-                estimated_cost: 12.50
+                estimated_cost: estimatedCost
             });
 
-            if (error) throw error;
-
             resetOrder();
+            setEstimatedCost(pricingSettings?.base_delivery_fee ?? 5.00);
             
             Alert.alert(
                 "Order Confirmed", 
                 "Your request has been placed and is waiting for a courier!", 
                 [{ 
                     text: "Track Order", 
-                    onPress: () => navigation.navigate('CustomerTracking', { orderId: data.id }) 
+                    onPress: () => navigation.navigate('CustomerTracking', { orderId: createdOrder.id }) 
                 }]
             );
         } catch (error: any) {
@@ -179,16 +248,12 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
 
     const handleFillMockData = () => {
         if (isDelivery) {
-            setPickupAddress('123 Green Ave, Silicon Valley');
-            setPickupCoords({ latitude: 37.78825, longitude: -122.4324 });
-            setDropoffAddress('456 Blue Blvd, San Francisco');
-            setDropoffCoords({ latitude: 37.8000, longitude: -122.4200 });
-            setPackageDescription('Large Parcel with Electronics');
+            setPickup('123 Green Ave, Silicon Valley', { latitude: 37.78825, longitude: -122.4324 });
+            setDropoff('456 Blue Blvd, San Francisco', { latitude: 37.8000, longitude: -122.4200 });
+            setPackageDesc('Large Parcel with Electronics');
         } else {
-            setErrandLocation('Whole Foods Market, SOMA');
-            setErrandCoords({ latitude: 37.7700, longitude: -122.4000 });
-            setDropoffAddress('My Apartment, 789 Red St');
-            setDropoffCoords({ latitude: 37.7800, longitude: -122.4100 });
+            setErrand('Whole Foods Market, SOMA', { latitude: 37.7700, longitude: -122.4000 });
+            setDropoff('My Apartment, 789 Red St', { latitude: 37.7800, longitude: -122.4100 });
             setErrandInstructions('- Milk\n- Bread\n- Fresh Apples');
         }
         setShowErrors(false);
@@ -377,7 +442,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                         <View style={styles.summarySection}>
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Estimated Cost:</Text>
-                                <Text style={styles.summaryTitle}>$12.50</Text>
+                                <Text style={styles.summaryTitle}>${estimatedCost.toFixed(2)}</Text>
                             </View>
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Payment Method:</Text>

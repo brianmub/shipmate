@@ -9,6 +9,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     const { orderId } = route.params;
     const [order, setOrder] = useState<any>(null);
     const [loading, setLoading] = useState(true);
+    const [viewingCouriers, setViewingCouriers] = useState<any[]>([]);
 
     const fetchOrder = async () => {
         try {
@@ -40,8 +41,29 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
             })
             .subscribe();
 
+        const presenceChannel = supabase.channel(`order_viewers:${orderId}`);
+        presenceChannel
+            .on('presence', { event: 'sync' }, () => {
+                const state = presenceChannel.presenceState();
+                const couriers: any[] = [];
+                Object.keys(state).forEach((key) => {
+                    state[key].forEach((presence: any) => {
+                        if (presence.user) {
+                            couriers.push(presence.user);
+                        }
+                    });
+                });
+                // Deduplicate by ID
+                const uniqueCouriers = couriers.filter(
+                    (c, index, self) => self.findIndex((t) => t.id === c.id) === index
+                );
+                setViewingCouriers(uniqueCouriers);
+            })
+            .subscribe();
+
         return () => {
             supabase.removeChannel(channel);
+            supabase.removeChannel(presenceChannel);
         };
     }, [orderId]);
 
@@ -111,18 +133,54 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                             </View>
                         </View>
 
-                        <View style={styles.driverInfoCard}>
-                            <View style={styles.driverAvatar}>
-                                <Text style={styles.driverAvatarText}>{driverName.charAt(0).toUpperCase()}</Text>
+                        {order.status === 'pending' ? (
+                            <View style={styles.viewersCard}>
+                                <View style={styles.viewersHeader}>
+                                    <ActivityIndicator size="small" color="#F59E0B" style={{ marginRight: 8 }} />
+                                    <Text style={styles.viewersTitle}>Searching for Couriers...</Text>
+                                </View>
+                                <Text style={styles.viewersSubtitle}>
+                                    We are finding nearby drivers for your {isDelivery ? 'delivery' : 'errand'}.
+                                </Text>
+                                <View style={styles.viewersSeparator} />
+                                {viewingCouriers.length > 0 ? (
+                                    <View>
+                                        <Text style={styles.viewingCountText}>
+                                            👀 {viewingCouriers.length} courier{viewingCouriers.length > 1 ? 's' : ''} currently viewing your offer:
+                                        </Text>
+                                        {viewingCouriers.map((courier) => (
+                                            <View key={courier.id} style={styles.courierRow}>
+                                                <View style={styles.courierAvatarSmall}>
+                                                    <Text style={styles.courierAvatarSmallText}>
+                                                        {courier.full_name?.charAt(0).toUpperCase() || 'C'}
+                                                    </Text>
+                                                </View>
+                                                <Text style={styles.courierNameText}>
+                                                    {courier.full_name} is reviewing details
+                                                </Text>
+                                            </View>
+                                        ))}
+                                    </View>
+                                ) : (
+                                    <Text style={styles.waitingText}>
+                                        🔍 Waiting for couriers to inspect details...
+                                    </Text>
+                                )}
                             </View>
-                            <View style={styles.driverDetails}>
-                                <Text style={styles.driverNameLabel}>Your Courier</Text>
-                                <Text style={styles.driverName}>{driverName}</Text>
+                        ) : (
+                            <View style={styles.driverInfoCard}>
+                                <View style={styles.driverAvatar}>
+                                    <Text style={styles.driverAvatarText}>{driverName.charAt(0).toUpperCase()}</Text>
+                                </View>
+                                <View style={styles.driverDetails}>
+                                    <Text style={styles.driverNameLabel}>Your Courier</Text>
+                                    <Text style={styles.driverName}>{driverName}</Text>
+                                </View>
+                                <TouchableOpacity style={styles.contactBtn}>
+                                    <Text style={styles.contactIcon}>📞</Text>
+                                </TouchableOpacity>
                             </View>
-                            <TouchableOpacity style={styles.contactBtn}>
-                                <Text style={styles.contactIcon}>📞</Text>
-                            </TouchableOpacity>
-                        </View>
+                        )}
                     </SafeAreaView>
                 </BlurView>
             </View>
@@ -195,4 +253,81 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(52, 168, 83, 0.1)', justifyContent: 'center', alignItems: 'center',
     },
     contactIcon: { fontSize: 20 },
+
+    viewersCard: {
+        backgroundColor: 'rgba(255, 255, 255, 0.85)',
+        borderRadius: 20,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(245, 158, 11, 0.3)',
+        marginBottom: 20,
+        shadowColor: '#F59E0B',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    viewersHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+    viewersTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#D97706',
+    },
+    viewersSubtitle: {
+        fontSize: 13,
+        color: '#64748B',
+        marginBottom: 12,
+        lineHeight: 18,
+    },
+    viewersSeparator: {
+        height: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.05)',
+        marginBottom: 12,
+    },
+    viewingCountText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#475569',
+        marginBottom: 8,
+    },
+    courierRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        padding: 10,
+        borderRadius: 12,
+        marginBottom: 6,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.02)',
+    },
+    courierAvatarSmall: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: '#F59E0B',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    courierAvatarSmallText: {
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontWeight: 'bold',
+    },
+    courierNameText: {
+        fontSize: 13,
+        color: '#1E293B',
+        fontWeight: '500',
+    },
+    waitingText: {
+        fontSize: 13,
+        color: '#94A3B8',
+        fontStyle: 'italic',
+        textAlign: 'center',
+        paddingVertical: 8,
+    },
 });

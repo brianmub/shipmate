@@ -83,12 +83,17 @@ export const OrderHistoryScreen = ({ navigation }: any) => {
                         <Text style={styles.priceLabel}>Estimated Cost</Text>
                         <Text style={styles.price}>${item.estimated_cost?.toFixed(2) || '0.00'}</Text>
                     </View>
-                    {(item.status === 'accepted' || item.status === 'in_progress') ? (
+                    {(item.status === 'pending' || item.status === 'accepted' || item.status === 'in_progress') ? (
                         <TouchableOpacity
-                            style={[styles.detailsButton, { backgroundColor: '#34A853' }]}
+                            style={[
+                                styles.detailsButton,
+                                { backgroundColor: item.status === 'pending' ? '#F59E0B' : '#34A853' }
+                            ]}
                             onPress={() => navigation.navigate('CustomerTracking', { orderId: item.id })}
                         >
-                            <Text style={[styles.detailsButtonText, { color: '#fff' }]}>Track Order</Text>
+                            <Text style={[styles.detailsButtonText, { color: '#fff' }]}>
+                                {item.status === 'pending' ? 'Find Courier' : 'Track Order'}
+                            </Text>
                         </TouchableOpacity>
                     ) : (
                         <TouchableOpacity style={styles.detailsButton}>

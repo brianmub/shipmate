@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "ShipMateApp",
-    "slug": "ShipMateApp",
+    "slug": "shipmate",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -26,6 +26,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ffd47272-3882-40d0-b2d3-9bbfb92e769b"
+      }
+    },
+    "owner": "shipmate.co.zw"
   }
 }

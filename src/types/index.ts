@@ -111,6 +111,8 @@ export interface Order {
     package_category: string | null;
     package_weight: string | null;
     package_dimensions: string | null;
+    package_image_url?: string | null;
+    ai_size_estimate?: string | null;
     
     // Pricing
     estimated_cost: number;

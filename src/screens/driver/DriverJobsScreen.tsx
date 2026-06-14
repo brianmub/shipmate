@@ -1,15 +1,48 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, StatusBar, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { orderService } from '../../services/orderService';
+import { useAuthStore } from '../../store/authStore';
+import { supabase } from '../../utils/supabase';
 
 export const DriverJobsScreen = ({ navigation }: any) => {
     const { user } = useAuthStore();
     const [jobs, setJobs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [acceptingId, setAcceptingId] = useState<string | null>(null);
+    const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+    const activeChannelRef = useRef<any>(null);
+
+    useEffect(() => {
+        if (activeChannelRef.current) {
+            supabase.removeChannel(activeChannelRef.current);
+            activeChannelRef.current = null;
+        }
+
+        if (expandedJobId && user) {
+            const channel = supabase.channel(`order_viewers:${expandedJobId}`);
+            activeChannelRef.current = channel;
+
+            channel.subscribe(async (status) => {
+                if (status === 'SUBSCRIBED') {
+                    await channel.track({
+                        user: {
+                            id: user.id,
+                            full_name: user.user_metadata?.full_name || user.email || 'Courier'
+                        }
+                    });
+                }
+            });
+        }
+
+        return () => {
+            if (activeChannelRef.current) {
+                supabase.removeChannel(activeChannelRef.current);
+            }
+        };
+    }, [expandedJobId, user]);
 
     const fetchPendingJobs = async () => {
         try {
@@ -66,65 +99,94 @@ export const DriverJobsScreen = ({ navigation }: any) => {
 
     const renderJobCard = ({ item }: { item: any }) => {
         const isDelivery = item.service_type === 'delivery';
+        const isExpanded = expandedJobId === item.id;
 
         return (
             <BlurView intensity={40} tint="light" style={styles.cardContainer}>
-                <View style={styles.cardHeader}>
-                    <View style={styles.serviceTypeRow}>
-                        <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(52, 168, 83, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
-                            <Text style={styles.serviceIcon}>{isDelivery ? '📦' : '🛒'}</Text>
+                <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => setExpandedJobId(isExpanded ? null : item.id)}
+                >
+                    <View style={styles.cardHeader}>
+                        <View style={styles.serviceTypeRow}>
+                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(52, 168, 83, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
+                                <Text style={styles.serviceIcon}>{isDelivery ? '📦' : '🛒'}</Text>
+                            </View>
+                            <Text style={styles.jobType}>
+                                {isDelivery ? 'Package Delivery' : 'Errand'}
+                            </Text>
                         </View>
-                        <Text style={styles.jobType}>
-                            {isDelivery ? 'Package Delivery' : 'Errand'}
-                        </Text>
+                        <View style={styles.headerRight}>
+                            <Text style={styles.earnings}>${item.estimated_cost?.toFixed(2) || '0.00'}</Text>
+                            <Text style={styles.chevronIcon}>{isExpanded ? ' ▲' : ' ▼'}</Text>
+                        </View>
                     </View>
-                    <Text style={styles.earnings}>${item.estimated_cost?.toFixed(2) || '0.00'}</Text>
-                </View>
 
-                {/* In a real app we would calculate real distance between driver and pickup */}
-                <Text style={styles.distanceText}>📍 2.4 miles away</Text>
+                    {/* In a real app we would calculate real distance between driver and pickup */}
+                    <Text style={styles.distanceText}>📍 2.4 miles away</Text>
 
-                <View style={styles.locationContainer}>
-                    {isDelivery ? (
-                        <>
-                            <View style={styles.locationRow}>
-                                <View style={styles.timelineDot} />
-                                <Text style={styles.locationText} numberOfLines={1}>
-                                    <Text style={styles.locationLabel}>Pickup: </Text>
-                                    {item.pickup_address || 'No pickup specified'}
+                    <View style={styles.locationContainer}>
+                        {isDelivery ? (
+                            <>
+                                <View style={styles.locationRow}>
+                                    <View style={styles.timelineDot} />
+                                    <Text style={styles.locationText} numberOfLines={1}>
+                                        <Text style={styles.locationLabel}>Pickup: </Text>
+                                        {item.pickup_address || 'No pickup specified'}
+                                    </Text>
+                                </View>
+                                <View style={styles.timelineLine} />
+                                <View style={styles.locationRow}>
+                                    <View style={[styles.timelineDot, styles.timelineDotEnd]} />
+                                    <Text style={styles.locationText} numberOfLines={1}>
+                                        <Text style={styles.locationLabel}>Dropoff: </Text>
+                                        {item.dropoff_address || 'No dropoff specified'}
+                                    </Text>
+                                </View>
+                            </>
+                        ) : (
+                            <>
+                                <View style={styles.locationRow}>
+                                    <View style={styles.timelineDot} />
+                                    <Text style={styles.locationText} numberOfLines={1}>
+                                        <Text style={styles.locationLabel}>Store: </Text>
+                                        {item.errand_location || 'Unknown store'}
+                                    </Text>
+                                </View>
+                                <View style={styles.timelineLine} />
+                                <View style={styles.locationRow}>
+                                    <View style={[styles.timelineDot, styles.timelineDotEnd]} />
+                                    <Text style={styles.locationText} numberOfLines={1}>
+                                        <Text style={styles.locationLabel}>Dropoff: </Text>
+                                        {item.dropoff_address || 'No delivery specified'}
+                                    </Text>
+                                </View>
+                            </>
+                        )}
+                    </View>
+
+                    {isExpanded && (
+                        <View style={styles.expandedDetails}>
+                            <View style={styles.expandedSeparator} />
+                            <Text style={styles.detailsLabel}>
+                                {isDelivery ? 'Package Details' : 'Errand Details / Shopping List'}
+                            </Text>
+                            <Text style={styles.detailsValue}>
+                                {isDelivery 
+                                    ? (item.package_description || 'No package description provided.') 
+                                    : (item.errand_instructions || 'No shopping list or instructions provided.')}
+                            </Text>
+                            <View style={styles.viewingIndicatorRow}>
+                                <Text style={styles.viewingIndicatorDot}>🟢</Text>
+                                <Text style={styles.viewingIndicatorText}>
+                                    Customer sees you are reviewing this offer
                                 </Text>
                             </View>
-                            <View style={styles.timelineLine} />
-                            <View style={styles.locationRow}>
-                                <View style={[styles.timelineDot, styles.timelineDotEnd]} />
-                                <Text style={styles.locationText} numberOfLines={1}>
-                                    <Text style={styles.locationLabel}>Dropoff: </Text>
-                                    {item.dropoff_address || 'No dropoff specified'}
-                                </Text>
-                            </View>
-                        </>
-                    ) : (
-                        <>
-                            <View style={styles.locationRow}>
-                                <View style={styles.timelineDot} />
-                                <Text style={styles.locationText} numberOfLines={1}>
-                                    <Text style={styles.locationLabel}>Store: </Text>
-                                    {item.errand_location || 'Unknown store'}
-                                </Text>
-                            </View>
-                            <View style={styles.timelineLine} />
-                            <View style={styles.locationRow}>
-                                <View style={[styles.timelineDot, styles.timelineDotEnd]} />
-                                <Text style={styles.locationText} numberOfLines={1}>
-                                    <Text style={styles.locationLabel}>Dropoff: </Text>
-                                    {item.dropoff_address || 'No delivery specified'}
-                                </Text>
-                            </View>
-                        </>
+                        </View>
                     )}
-                </View>
+                </TouchableOpacity>
 
-                <View style={styles.actionRow}>
+                <View style={[styles.actionRow, isExpanded ? { marginTop: 16 } : null]}>
                     <TouchableOpacity style={styles.rejectButton}>
                         <Text style={styles.rejectText}>Decline</Text>
                     </TouchableOpacity>
@@ -403,5 +465,57 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         fontSize: 16,
         letterSpacing: 0.5,
+    },
+    headerRight: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    chevronIcon: {
+        fontSize: 14,
+        color: '#64748B',
+        marginLeft: 6,
+    },
+    expandedDetails: {
+        backgroundColor: 'rgba(255, 255, 255, 0.4)',
+        borderRadius: 16,
+        padding: 16,
+        marginTop: 4,
+    },
+    expandedSeparator: {
+        height: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.05)',
+        marginBottom: 12,
+    },
+    detailsLabel: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#64748B',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginBottom: 4,
+    },
+    detailsValue: {
+        fontSize: 14,
+        color: '#1E293B',
+        fontWeight: '500',
+        lineHeight: 20,
+        marginBottom: 12,
+    },
+    viewingIndicatorRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(52, 168, 83, 0.08)',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 10,
+    },
+    viewingIndicatorDot: {
+        fontSize: 8,
+        marginRight: 8,
+    },
+    viewingIndicatorText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#2E9348',
     },
 });

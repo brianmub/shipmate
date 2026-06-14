@@ -34,12 +34,16 @@ export const useOrderStore = create<OrderState>((set) => ({
     errandLocation: '',
     errandCoords: null,
     errandList: '',
+    packageImage: null,
+    aiEstimate: null,
     serviceType: 'delivery',
 
     setPickup: (address, coords) => set({ pickupAddress: address, pickupCoords: coords }),
     setDropoff: (address, coords) => set({ dropoffAddress: address, dropoffCoords: coords }),
     setErrand: (address, coords) => set({ errandLocation: address, errandCoords: coords }),
     setPackageDesc: (packageDescription) => set({ packageDescription }),
+    setPackageImage: (url) => set({ packageImage: url }),
+    setAIEstimate: (estimate) => set({ aiEstimate: estimate }),
     setErrandInstructions: (errandList) => set({ errandList }),
     setServiceType: (serviceType) => set({ serviceType }),
     resetOrder: () => set({
