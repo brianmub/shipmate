@@ -28,7 +28,7 @@ export const DriverNavigator = () => {
         <Drawer.Navigator
             screenOptions={{
                 headerTintColor: '#333',
-                drawerActiveTintColor: '#34A853',
+                drawerActiveTintColor: '#055FEE',
                 drawerActiveBackgroundColor: '#E8F5E9',
             }}
         >

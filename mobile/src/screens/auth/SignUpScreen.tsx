@@ -33,7 +33,7 @@ export const SignUpScreen = ({ navigation }: any) => {
         if (!password) return { label: '', color: 'transparent', width: '0%' };
         if (password.length < 6) return { label: 'Weak', color: '#EF4444', width: '30%' };
         if (password.length < 10) return { label: 'Medium', color: '#F59E0B', width: '60%' };
-        return { label: 'Strong', color: '#34A853', width: '100%' };
+        return { label: 'Strong', color: '#055FEE', width: '100%' };
     };
 
     const strength = getPasswordStrength();
@@ -180,7 +180,7 @@ export const SignUpScreen = ({ navigation }: any) => {
                             {password.length > 0 && (
                                 <View style={styles.strengthWrapper}>
                                     <View style={styles.strengthBarContainer}>
-                                        <View style={[styles.strengthBar, { width: strength.width, backgroundColor: strength.color }]} />
+                                        <View style={[styles.strengthBar, { width: strength.width as any, backgroundColor: strength.color }]} />
                                     </View>
                                     <Text style={[styles.strengthLabel, { color: strength.color }]}>{strength.label}</Text>
                                 </View>
@@ -208,7 +208,7 @@ export const SignUpScreen = ({ navigation }: any) => {
                             disabled={loading}
                         >
                             <LinearGradient
-                                colors={['#34A853', '#2E9348']}
+                                colors={['#055FEE', '#5B99F2']}
                                 style={styles.gradientButton}
                             >
                                 {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>Create Account</Text>}
@@ -252,7 +252,7 @@ const styles = StyleSheet.create({
         left: 0,
         width: 146, // Approximately half of the width minus padding
         height: 48,
-        backgroundColor: '#34A853',
+        backgroundColor: '#055FEE',
         borderRadius: 16,
     },
     roleBtn: { flex: 1, justifyContent: 'center', alignItems: 'center', zIndex: 1 },
@@ -279,11 +279,11 @@ const styles = StyleSheet.create({
     strengthBar: { height: '100%', borderRadius: 2 },
     strengthLabel: { fontSize: 12, fontWeight: '700', width: 50 },
 
-    primaryButton: { borderRadius: 20, overflow: 'hidden', marginTop: 12, elevation: 8, shadowColor: '#34A853', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 12 },
+    primaryButton: { borderRadius: 20, overflow: 'hidden', marginTop: 12, elevation: 8, shadowColor: '#055FEE', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 12 },
     gradientButton: { height: 64, justifyContent: 'center', alignItems: 'center' },
     buttonText: { color: '#FFF', fontSize: 18, fontWeight: '800', letterSpacing: 0.5 },
     
     footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 24 },
     footerText: { color: 'rgba(255,255,255,0.6)', fontSize: 14 },
-    footerLink: { color: '#34A853', fontWeight: '800', fontSize: 14 },
+    footerLink: { color: '#055FEE', fontWeight: '800', fontSize: 14 },
 });

@@ -93,7 +93,7 @@ export const PersonalDetailsScreen = ({ navigation }: any) => {
                         disabled={loading}
                     >
                         <LinearGradient
-                            colors={['#34A853', '#2E9348']}
+                            colors={['#055FEE', '#5B99F2']}
                             style={styles.buttonGradient}
                         >
                             <Text style={styles.buttonText}>{loading ? 'Saving...' : 'Next Step'}</Text>
@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: '#1E293B',
     },
-    nextButton: { borderRadius: 16, overflow: 'hidden', elevation: 4, shadowColor: '#34A853', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8 },
+    nextButton: { borderRadius: 16, overflow: 'hidden', elevation: 4, shadowColor: '#055FEE', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8 },
     buttonGradient: { paddingVertical: 18, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10 },
     buttonText: { color: '#FFF', fontSize: 18, fontWeight: '700' },
 });

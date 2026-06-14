@@ -16,7 +16,7 @@ const AdminTabs = () => (
     <Tab.Navigator 
         screenOptions={({ route }) => ({
             headerShown: false,
-            tabBarActiveTintColor: '#34A853',
+            tabBarActiveTintColor: '#055FEE',
             tabBarInactiveTintColor: '#94A3B8',
             tabBarStyle: {
                 backgroundColor: '#0F172A',

@@ -69,7 +69,7 @@ export const VehicleDetailsScreen = ({ navigation }: any) => {
                                 <Ionicons 
                                     name={type.icon as any} 
                                     size={32} 
-                                    color={vehicle.vehicle_type === type.id ? '#34A853' : '#64748B'} 
+                                    color={vehicle.vehicle_type === type.id ? '#055FEE' : '#64748B'} 
                                 />
                                 <Text style={[styles.typeLabel, vehicle.vehicle_type === type.id && styles.activeTypeLabel]}>
                                     {type.label}
@@ -112,7 +112,7 @@ export const VehicleDetailsScreen = ({ navigation }: any) => {
                         disabled={loading}
                     >
                         <LinearGradient
-                            colors={['#34A853', '#2E9348']}
+                            colors={['#055FEE', '#5B99F2']}
                             style={styles.buttonGradient}
                         >
                             <Text style={styles.buttonText}>{loading ? 'Saving...' : 'Next Step'}</Text>
@@ -136,9 +136,9 @@ const styles = StyleSheet.create({
     sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1E293B', marginBottom: 16 },
     typeGrid: { flexDirection: 'row', gap: 12, marginBottom: 32 },
     typeCard: { flex: 1, height: 100, backgroundColor: '#FFF', borderRadius: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
-    activeType: { borderColor: '#34A853', backgroundColor: 'rgba(52, 168, 83, 0.05)' },
+    activeType: { borderColor: '#055FEE', backgroundColor: 'rgba(5, 95, 238, 0.05)' },
     typeLabel: { fontSize: 12, fontWeight: '600', color: '#64748B', marginTop: 8 },
-    activeTypeLabel: { color: '#34A853' },
+    activeTypeLabel: { color: '#055FEE' },
     form: { gap: 20, marginBottom: 40 },
     inputGroup: { gap: 8 },
     label: { fontSize: 14, fontWeight: '600', color: '#475569' },

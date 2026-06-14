@@ -86,7 +86,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
         return (
             <LinearGradient colors={['#F8FAFC', '#E2E8F0']} style={styles.safeArea}>
                 <View style={styles.centerContainer}>
-                    <ActivityIndicator size="large" color="#34A853" />
+                    <ActivityIndicator size="large" color="#055FEE" />
                 </View>
             </LinearGradient>
         );
@@ -180,12 +180,12 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                         <View style={styles.dragHandle} />
 
                         <View style={styles.titleRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(52, 168, 83, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
+                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(5, 95, 238, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
                                 <Text style={styles.serviceIcon}>{isDelivery ? '📦' : '🛒'}</Text>
                             </View>
                             <View>
                                 <Text style={styles.jobType}>{isDelivery ? 'Package Delivery' : 'Errand'}</Text>
-                                <Text style={styles.statusText}>
+                                <Text style={[styles.statusText, { color: (order.status === 'completed' || order.status === 'delivered') ? '#22C55E' : '#055FEE' }]}>
                                     {order.status === 'in_progress' ? 'Driver is on the way' :
                                         order.status === 'accepted' ? 'Driver is heading to pickup' :
                                             order.status === 'completed' ? 'Delivered' : 'Pending'}
@@ -265,7 +265,7 @@ const styles = StyleSheet.create({
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: 'rgba(52, 168, 83, 0.3)',
+        backgroundColor: 'rgba(176, 106, 40, 0.3)',
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -290,7 +290,7 @@ const styles = StyleSheet.create({
     iconContainer: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
     serviceIcon: { fontSize: 20 },
     jobType: { fontSize: 20, fontWeight: '800', color: '#0F172A', letterSpacing: -0.5 },
-    statusText: { fontSize: 14, color: '#34A853', fontWeight: '600' },
+    statusText: { fontSize: 14, fontWeight: '600' },
 
     driverInfoCard: {
         flexDirection: 'row',
@@ -333,7 +333,7 @@ const styles = StyleSheet.create({
         width: 48,
         height: 48,
         borderRadius: 24,
-        backgroundColor: 'rgba(52, 168, 83, 0.1)',
+        backgroundColor: 'rgba(5, 95, 238, 0.1)',
         justifyContent: 'center',
         alignItems: 'center',
     },

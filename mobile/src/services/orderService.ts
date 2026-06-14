@@ -127,6 +127,48 @@ export const orderService = {
     },
 
     /**
+     * Fetch active job for a driver
+     */
+    async getActiveDriverJob(driverId: string) {
+        const { data, error } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('driver_id', driverId)
+            .in('status', [
+                'driver_assigned', 
+                'en_route_to_pickup', 
+                'arrived_at_pickup', 
+                'picked_up', 
+                'en_route_to_delivery', 
+                'arrived_at_delivery'
+            ])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+        if (error && error.code !== 'PGRST116') throw error;
+        return data as Order | null;
+    },
+
+    /**
+     * Update order status
+     */
+    async updateOrderStatus(orderId: string, status: OrderStatus) {
+        const { data, error } = await supabase
+            .from('orders')
+            .update({ 
+                status, 
+                updated_at: new Date().toISOString() 
+            })
+            .eq('id', orderId)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data as Order;
+    },
+
+    /**
      * Update driver location for an active order
      */
     async updateDriverLocation(orderId: string, latitude: number, longitude: number) {

@@ -27,7 +27,7 @@ export const DriverProfileScreen = ({ navigation }: any) => {
                 {/* Profile Card */}
                 <BlurView intensity={20} tint="light" style={styles.profileCard}>
                     <LinearGradient
-                        colors={['#34A853', '#2E9348']}
+                        colors={['#055FEE', '#5B99F2']}
                         style={styles.avatarGradient}
                     >
                         <Text style={styles.avatarText}>{initals.toUpperCase()}</Text>
@@ -141,7 +141,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 20,
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,
@@ -166,13 +166,13 @@ const styles = StyleSheet.create({
     badgeContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(52, 168, 83, 0.2)',
+        backgroundColor: 'rgba(176, 106, 40, 0.3)',
         paddingHorizontal: 12,
         paddingVertical: 6,
         borderRadius: 12,
         alignSelf: 'flex-start',
         borderWidth: 1,
-        borderColor: 'rgba(52, 168, 83, 0.4)',
+        borderColor: 'rgba(5, 95, 238, 0.4)',
     },
     badgeIcon: {
         color: '#4ADE80',

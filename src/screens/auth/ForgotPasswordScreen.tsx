@@ -56,7 +56,7 @@ export const ForgotPasswordScreen = ({ navigation }: any) => {
 
                     <View style={styles.headerContainer}>
                         <View style={styles.iconContainer}>
-                            <Ionicons name="key-outline" size={40} color="#34A853" />
+                            <Ionicons name="key-outline" size={40} color="#055FEE" />
                         </View>
                         <Text style={styles.headerTitle}>Forgot Password?</Text>
                         <Text style={styles.subtext}>Enter your email to receive reset instructions</Text>
@@ -73,7 +73,7 @@ export const ForgotPasswordScreen = ({ navigation }: any) => {
                                 onChangeText={setEmail}
                                 autoCapitalize="none"
                                 keyboardType="email-address"
-                                selectionColor="#34A853"
+                                selectionColor="#055FEE"
                             />
                         </View>
 
@@ -84,7 +84,7 @@ export const ForgotPasswordScreen = ({ navigation }: any) => {
                             disabled={loading}
                         >
                             <LinearGradient
-                                colors={['#34A853', '#2E9348']}
+                                colors={['#055FEE', '#5B99F2']}
                                 style={styles.gradientButton}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
@@ -125,12 +125,12 @@ const styles = StyleSheet.create({
         width: 80,
         height: 80,
         borderRadius: 40,
-        backgroundColor: 'rgba(52, 168, 83, 0.1)',
+        backgroundColor: 'rgba(5, 95, 238, 0.1)',
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 20,
         borderWidth: 1,
-        borderColor: 'rgba(52, 168, 83, 0.3)',
+        borderColor: 'rgba(176, 106, 40, 0.3)',
     },
     headerTitle: {
         fontSize: 32,
@@ -175,7 +175,7 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         overflow: 'hidden',
         elevation: 6,
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.4,
         shadowRadius: 8,

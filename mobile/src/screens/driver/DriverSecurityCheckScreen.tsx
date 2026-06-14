@@ -16,7 +16,7 @@ export const DriverSecurityCheckScreen = ({ navigation }: any) => {
 
     if (!permission) {
         // Camera permissions are still loading.
-        return <View style={styles.centerContainer}><ActivityIndicator size="large" color="#34A853" /></View>;
+        return <View style={styles.centerContainer}><ActivityIndicator size="large" color="#055FEE" /></View>;
     }
 
     if (!permission.granted) {
@@ -69,7 +69,7 @@ export const DriverSecurityCheckScreen = ({ navigation }: any) => {
 
     return (
         <View style={styles.container}>
-            <StatusBar barStyle="light-content" transparent backgroundColor="transparent" />
+            <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
             
             <CameraView style={styles.camera} facing="front">
                 <View style={styles.overlay}>
@@ -100,7 +100,7 @@ export const DriverSecurityCheckScreen = ({ navigation }: any) => {
                                 disabled={isVerifying}
                             >
                                 <LinearGradient
-                                    colors={['#34A853', '#2E9348']}
+                                    colors={['#055FEE', '#5B99F2']}
                                     style={styles.verifyBtn}
                                 >
                                     <Text style={styles.verifyBtnText}>Verify My Identity</Text>
@@ -170,17 +170,17 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
     },
     scanningFrame: {
-        borderColor: '#34A853',
+        borderColor: '#055FEE',
         borderStyle: 'solid',
         borderWidth: 4,
     },
     scanLine: {
         width: '100%',
         height: 4,
-        backgroundColor: '#34A853',
+        backgroundColor: '#055FEE',
         position: 'absolute',
         top: 0,
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 10 },
         shadowOpacity: 1,
         shadowRadius: 20,
@@ -223,7 +223,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#0F172A',
     },
     permissionBtn: {
-        backgroundColor: '#34A853',
+        backgroundColor: '#055FEE',
         padding: 16,
         borderRadius: 12,
         marginTop: 20,

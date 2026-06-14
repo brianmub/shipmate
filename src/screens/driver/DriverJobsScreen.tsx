@@ -109,7 +109,7 @@ export const DriverJobsScreen = ({ navigation }: any) => {
                 >
                     <View style={styles.cardHeader}>
                         <View style={styles.serviceTypeRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(52, 168, 83, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
+                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(5, 95, 238, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
                                 <Text style={styles.serviceIcon}>{isDelivery ? '📦' : '🛒'}</Text>
                             </View>
                             <Text style={styles.jobType}>
@@ -198,7 +198,7 @@ export const DriverJobsScreen = ({ navigation }: any) => {
                         disabled={acceptingId === item.id}
                     >
                         <LinearGradient
-                            colors={['#34A853', '#2E9348']}
+                            colors={['#055FEE', '#5B99F2']}
                             style={styles.acceptGradient}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 0 }}
@@ -236,7 +236,7 @@ export const DriverJobsScreen = ({ navigation }: any) => {
 
                 {loading ? (
                     <View style={styles.centerContainer}>
-                        <ActivityIndicator size="large" color="#34A853" />
+                        <ActivityIndicator size="large" color="#055FEE" />
                     </View>
                 ) : jobs.length === 0 ? (
                     <View style={styles.centerContainer}>
@@ -303,7 +303,7 @@ const styles = StyleSheet.create({
     },
     refreshText: {
         fontSize: 24,
-        color: '#34A853',
+        color: '#055FEE',
     },
     centerContainer: {
         flex: 1,
@@ -380,7 +380,7 @@ const styles = StyleSheet.create({
     earnings: {
         fontSize: 22,
         fontWeight: '800',
-        color: '#34A853',
+        color: '#055FEE',
     },
     distanceText: {
         fontSize: 14,
@@ -449,7 +449,7 @@ const styles = StyleSheet.create({
         flex: 2,
         borderRadius: 14,
         overflow: 'hidden',
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,
@@ -504,7 +504,7 @@ const styles = StyleSheet.create({
     viewingIndicatorRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(52, 168, 83, 0.08)',
+        backgroundColor: 'rgba(5, 95, 238, 0.08)',
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: 10,
@@ -516,6 +516,6 @@ const styles = StyleSheet.create({
     viewingIndicatorText: {
         fontSize: 12,
         fontWeight: '600',
-        color: '#2E9348',
+        color: '#5B99F2',
     },
 });

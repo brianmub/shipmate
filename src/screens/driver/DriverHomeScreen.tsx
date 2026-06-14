@@ -67,7 +67,7 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                                 {isOnline ? 'ONLINE' : 'OFFLINE'}
                             </Text>
                             <Switch
-                                trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#34A853' }}
+                                trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#055FEE' }}
                                 thumbColor={isOnline ? '#FFFFFF' : '#f4f3f4'}
                                 ios_backgroundColor="rgba(255,255,255,0.2)"
                                 onValueChange={toggleOnline}
@@ -126,7 +126,7 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                             disabled={!isOnline}
                         >
                             <LinearGradient
-                                colors={isOnline ? ['#34A853', '#2E9348'] : ['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
+                                colors={isOnline ? ['#055FEE', '#5B99F2'] : ['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
                                 style={styles.jobsGradient}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
@@ -190,7 +190,7 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
     statusOnline: {
-        color: '#34A853',
+        color: '#055FEE',
     },
     statusOffline: {
         color: 'rgba(255,255,255,0.5)',
@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
     },
     viewMore: {
         fontSize: 14,
-        color: '#34A853',
+        color: '#055FEE',
         fontWeight: '600',
     },
     sectionTitle: {
@@ -256,7 +256,7 @@ const styles = StyleSheet.create({
     statValue: {
         fontSize: 28,
         fontWeight: '800',
-        color: '#34A853',
+        color: '#055FEE',
     },
     row: {
         flexDirection: 'row',
@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
     jobsButtonContainer: {
         borderRadius: 16,
         overflow: 'hidden',
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,

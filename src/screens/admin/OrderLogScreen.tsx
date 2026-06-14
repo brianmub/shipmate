@@ -28,7 +28,7 @@ export const OrderLogScreen = () => {
 
     const getStatusColor = (status: string) => {
         switch (status) {
-            case 'completed': return '#34A853';
+            case 'completed': return '#055FEE';
             case 'in_progress': return '#60A5FA';
             case 'accepted': return '#FACC15';
             case 'pending': return '#F87171';
@@ -89,7 +89,7 @@ export const OrderLogScreen = () => {
 
                 {loading ? (
                     <View style={styles.center}>
-                        <ActivityIndicator color="#34A853" size="large" />
+                        <ActivityIndicator color="#055FEE" size="large" />
                     </View>
                 ) : (
                     <FlatList
@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
     header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 20 },
     headerTitle: { fontSize: 28, fontWeight: '800', color: '#FFFFFF' },
     refreshBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
-    refreshIcon: { color: '#34A853', fontSize: 20 },
+    refreshIcon: { color: '#055FEE', fontSize: 20 },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     listContent: { padding: 20 },
     orderCard: { borderRadius: 24, padding: 20, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' },
@@ -126,5 +126,5 @@ const styles = StyleSheet.create({
     infoValue: { fontSize: 14, color: '#FFFFFF', fontWeight: '500', flex: 1, textAlign: 'right', marginLeft: 16 },
     orderFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)' },
     serviceType: { fontSize: 14, color: '#94A3B8', fontWeight: '600' },
-    cost: { fontSize: 18, fontWeight: '800', color: '#34A853' },
+    cost: { fontSize: 18, fontWeight: '800', color: '#055FEE' },
 });

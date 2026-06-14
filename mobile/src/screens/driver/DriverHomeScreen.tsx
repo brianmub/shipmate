@@ -133,7 +133,7 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                                 {isOnline ? 'ONLINE' : 'OFFLINE'}
                             </Text>
                             <Switch
-                                trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#34A853' }}
+                                trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#055FEE' }}
                                 thumbColor={isOnline ? '#FFFFFF' : '#f4f3f4'}
                                 ios_backgroundColor="rgba(255,255,255,0.2)"
                                 onValueChange={toggleOnline}
@@ -240,7 +240,7 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                             disabled={!isOnline || !isApproved}
                         >
                             <LinearGradient
-                                colors={isOnline && isApproved ? ['#34A853', '#2E9348'] : ['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
+                                colors={isOnline && isApproved ? ['#055FEE', '#5B99F2'] : ['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
                                 style={styles.jobsGradient}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
     statusOnline: {
-        color: '#34A853',
+        color: '#055FEE',
     },
     statusOffline: {
         color: 'rgba(255,255,255,0.5)',
@@ -333,11 +333,11 @@ const styles = StyleSheet.create({
     pendingBanner: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(52, 168, 83, 0.15)',
+        backgroundColor: 'rgba(5, 95, 238, 0.15)',
         padding: 16,
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: 'rgba(52, 168, 83, 0.4)',
+        borderColor: 'rgba(5, 95, 238, 0.4)',
         marginBottom: 32,
     },
     pendingText: {
@@ -372,7 +372,7 @@ const styles = StyleSheet.create({
     },
     viewMore: {
         fontSize: 14,
-        color: '#34A853',
+        color: '#055FEE',
         fontWeight: '600',
     },
     sectionTitle: {
@@ -404,7 +404,7 @@ const styles = StyleSheet.create({
     statValue: {
         fontSize: 28,
         fontWeight: '800',
-        color: '#34A853',
+        color: '#055FEE',
     },
     row: {
         flexDirection: 'row',
@@ -416,7 +416,7 @@ const styles = StyleSheet.create({
     jobsButtonContainer: {
         borderRadius: 16,
         overflow: 'hidden',
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,
@@ -458,7 +458,7 @@ const styles = StyleSheet.create({
     liveBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(52, 168, 83, 0.2)',
+        backgroundColor: 'rgba(176, 106, 40, 0.3)',
         paddingHorizontal: 10,
         paddingVertical: 4,
         borderRadius: 12,
@@ -467,11 +467,11 @@ const styles = StyleSheet.create({
         width: 6,
         height: 6,
         borderRadius: 3,
-        backgroundColor: '#34A853',
+        backgroundColor: '#055FEE',
         marginRight: 6,
     },
     liveText: {
-        color: '#34A853',
+        color: '#055FEE',
         fontSize: 10,
         fontWeight: '900',
         letterSpacing: 1,

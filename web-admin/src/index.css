@@ -1,9 +1,14 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-primary: #0F172A;
-  --color-brand-secondary: #34A853;
-  --color-brand-accent: #F59E0B;
+  --color-brand-primary: #055FEE;
+  --color-brand-secondary: #172029;
+  --color-brand-accent: #B06A28;
+  
+  /* Override Tailwind emerald classes to match the branding colors */
+  --color-emerald-500: #055FEE;
+  --color-emerald-400: #5B99F2;
+  --color-emerald-600: #044BBD;
 }
 
 html, body, #root {
@@ -11,5 +16,5 @@ html, body, #root {
   padding: 0;
   width: 100%;
   height: 100%;
-  background-color: #0F172A;
+  background-color: #172029;
 }

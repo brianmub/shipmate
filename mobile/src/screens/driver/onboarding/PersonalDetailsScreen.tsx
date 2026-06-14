@@ -133,7 +133,7 @@ export const PersonalDetailsScreen = ({ navigation }: any) => {
                                         withCallingCode
                                         withCallingCodeButton
                                         onSelect={onSelectCountry}
-                                        containerStyle={styles.countryPicker}
+                                        containerButtonStyle={styles.countryPicker as any}
                                     />
                                     <Ionicons name="chevron-down" size={14} color="#64748B" />
                                 </View>
@@ -154,7 +154,7 @@ export const PersonalDetailsScreen = ({ navigation }: any) => {
                         disabled={loading}
                     >
                         <LinearGradient
-                            colors={['#34A853', '#2E9348']}
+                            colors={['#055FEE', '#5B99F2']}
                             style={styles.buttonGradient}
                         >
                             <Text style={styles.buttonText}>{loading ? 'Saving...' : 'Next Step'}</Text>
@@ -252,7 +252,7 @@ const styles = StyleSheet.create({
         elevation: 2,
     },
     
-    nextButton: { borderRadius: 16, overflow: 'hidden', elevation: 8, shadowColor: '#34A853', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 12 },
+    nextButton: { borderRadius: 16, overflow: 'hidden', elevation: 8, shadowColor: '#055FEE', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 12 },
     buttonGradient: { paddingVertical: 18, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10 },
     buttonText: { color: '#FFF', fontSize: 18, fontWeight: '700', letterSpacing: 0.5 },
 });

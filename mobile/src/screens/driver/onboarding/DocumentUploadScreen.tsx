@@ -92,7 +92,7 @@ export const DocumentUploadScreen = ({ navigation }: any) => {
                         disabled={!isComplete}
                     >
                         <LinearGradient
-                            colors={isComplete ? ['#34A853', '#2E9348'] : ['#94A3B8', '#64748B']}
+                            colors={isComplete ? ['#055FEE', '#5B99F2'] : ['#94A3B8', '#64748B']}
                             style={styles.buttonGradient}
                         >
                             <Text style={styles.buttonText}>Next Step</Text>
@@ -108,10 +108,10 @@ export const DocumentUploadScreen = ({ navigation }: any) => {
 const UploadCard = ({ label, value, loading, onPress }: any) => (
     <TouchableOpacity style={styles.card} onPress={onPress} disabled={loading}>
         {loading ? (
-            <ActivityIndicator color="#34A853" />
+            <ActivityIndicator color="#055FEE" />
         ) : value ? (
             <View style={styles.completedCard}>
-                <Ionicons name="checkmark-circle" size={32} color="#34A853" />
+                <Ionicons name="checkmark-circle" size={32} color="#22C55E" />
                 <Text style={styles.cardLabel}>{label}</Text>
             </View>
         ) : (

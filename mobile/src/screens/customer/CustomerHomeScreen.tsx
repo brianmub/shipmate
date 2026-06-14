@@ -73,7 +73,7 @@ export const CustomerHomeScreen = ({ navigation }: any) => {
                         </View>
                         <TouchableOpacity style={styles.profileAvatar} onPress={() => navigation.navigate('CustomerProfile')}>
                             <LinearGradient
-                                colors={['#34A853', '#2E9348']}
+                                colors={['#055FEE', '#5B99F2']}
                                 style={styles.avatarGradient}
                             >
                                 <Text style={styles.avatarText}>{firstName.charAt(0)}</Text>
@@ -94,7 +94,7 @@ export const CustomerHomeScreen = ({ navigation }: any) => {
                                 colors={['#FFFFFF', '#F8FAFC']}
                                 style={styles.serviceCard}
                             >
-                                <View style={[styles.iconContainer, { backgroundColor: 'rgba(52, 168, 83, 0.1)' }]}>
+                                <View style={[styles.iconContainer, { backgroundColor: 'rgba(5, 95, 238, 0.1)' }]}>
                                     <Text style={styles.serviceIcon}>📦</Text>
                                 </View>
                                 <Text style={styles.serviceTitle}>Package Delivery</Text>
@@ -129,7 +129,7 @@ export const CustomerHomeScreen = ({ navigation }: any) => {
                     </View>
 
                     {loading ? (
-                        <ActivityIndicator color="#34A853" size="large" style={{ marginTop: 20 }} />
+                        <ActivityIndicator color="#055FEE" size="large" style={{ marginTop: 20 }} />
                     ) : recentOrders.length > 0 ? (
                         <View style={styles.ordersList}>
                             {recentOrders.map((order) => (
@@ -186,7 +186,7 @@ export const CustomerHomeScreen = ({ navigation }: any) => {
                                     onPress={() => startNewOrder('delivery')}
                                 >
                                     <LinearGradient
-                                        colors={['#34A853', '#2E9348']}
+                                        colors={['#055FEE', '#5B99F2']}
                                         style={styles.emptyStateGradient}
                                         start={{ x: 0, y: 0 }}
                                         end={{ x: 1, y: 0 }}
@@ -235,7 +235,7 @@ const styles = StyleSheet.create({
         letterSpacing: -0.5,
     },
     profileAvatar: {
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
         alignItems: 'baseline',
     },
     seeAllText: {
-        color: '#34A853',
+        color: '#055FEE',
         fontWeight: '600',
         fontSize: 14,
     },
@@ -355,7 +355,7 @@ const styles = StyleSheet.create({
         width: '100%',
         borderRadius: 16,
         overflow: 'hidden',
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,

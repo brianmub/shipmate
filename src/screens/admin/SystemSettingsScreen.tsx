@@ -38,7 +38,7 @@ export const SystemSettingsScreen = () => {
     };
 
     if (loading) {
-        return <View style={styles.center}><ActivityIndicator color="#34A853" /></View>;
+        return <View style={styles.center}><ActivityIndicator color="#055FEE" /></View>;
     }
 
     return (
@@ -47,7 +47,7 @@ export const SystemSettingsScreen = () => {
                 <View style={styles.header}>
                     <Text style={styles.title}>System Settings</Text>
                     <TouchableOpacity onPress={fetchSettings}>
-                        <Ionicons name="refresh" size={20} color="#34A853" />
+                        <Ionicons name="refresh" size={20} color="#055FEE" />
                     </TouchableOpacity>
                 </View>
 
@@ -58,14 +58,14 @@ export const SystemSettingsScreen = () => {
                         <View key={item.key} style={styles.settingCard}>
                             <View style={styles.cardHeader}>
                                 <Text style={styles.label}>{item.key.replace(/_/g, ' ').toUpperCase()}</Text>
-                                {saving === item.key && <ActivityIndicator size="small" color="#34A853" />}
+                                {saving === item.key && <ActivityIndicator size="small" color="#055FEE" />}
                             </View>
                             <Text style={styles.description}>{item.description}</Text>
                             <View style={styles.inputRow}>
                                 <TextInput
                                     style={styles.input}
                                     defaultValue={item.value}
-                                    onBlur={(e) => {
+                                    onBlur={(e: any) => {
                                         if (e.nativeEvent.text !== item.value) {
                                             handleUpdate(item.key, e.nativeEvent.text);
                                         }
@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
     content: { padding: 24, paddingTop: 0 },
     settingCard: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, padding: 20, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-    label: { color: '#34A853', fontSize: 12, fontWeight: '800', letterSpacing: 1 },
+    label: { color: '#055FEE', fontSize: 12, fontWeight: '800', letterSpacing: 1 },
     description: { color: 'rgba(255,255,255,0.6)', fontSize: 13, marginBottom: 12 },
     inputRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     input: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 12, padding: 12, color: '#FFF', fontSize: 18, fontWeight: '700' },

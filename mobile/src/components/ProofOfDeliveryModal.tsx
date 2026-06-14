@@ -128,7 +128,7 @@ const styles = StyleSheet.create({
     footerBtns: { flexDirection: 'row', gap: 12, marginTop: 20 },
     backBtn: { flex: 1, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', alignItems: 'center' },
     backTxt: { color: '#64748B', fontWeight: '600' },
-    submitBtn: { flex: 2, padding: 16, borderRadius: 12, backgroundColor: '#34A853', alignItems: 'center' },
+    submitBtn: { flex: 2, padding: 16, borderRadius: 12, backgroundColor: '#055FEE', alignItems: 'center' },
     submitTxt: { color: '#FFF', fontWeight: '700' },
     disabled: { opacity: 0.6 }
 });

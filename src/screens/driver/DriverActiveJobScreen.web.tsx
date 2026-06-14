@@ -128,7 +128,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
         return (
             <LinearGradient colors={['#F8FAFC', '#E2E8F0']} style={styles.safeArea}>
                 <View style={styles.centerContainer}>
-                    <ActivityIndicator size="large" color="#34A853" />
+                    <ActivityIndicator size="large" color="#055FEE" />
                 </View>
             </LinearGradient>
         );
@@ -149,7 +149,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                         onPress={() => navigation.navigate('Jobs')}
                     >
                         <LinearGradient
-                            colors={['#34A853', '#2E9348']}
+                            colors={['#055FEE', '#5B99F2']}
                             style={styles.navigateGradient}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 0 }}
@@ -201,7 +201,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                         <View style={styles.dragHandle} />
 
                         <View style={styles.titleRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(52, 168, 83, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
+                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(5, 95, 238, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
                                 <Text style={styles.serviceIcon}>{isDelivery ? '📦' : '🛒'}</Text>
                             </View>
                             <Text style={styles.jobType}>Current {isDelivery ? 'Delivery' : 'Errand'}</Text>
@@ -232,7 +232,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                             disabled={loading}
                         >
                             <LinearGradient
-                                colors={['#34A853', '#2E9348']}
+                                colors={['#055FEE', '#5B99F2']}
                                 style={styles.completeGradient}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}

@@ -116,7 +116,7 @@ export const SignUpScreen = ({ navigation }: any) => {
                                 value={fullName}
                                 onChangeText={setFullName}
                                 autoCapitalize="words"
-                                selectionColor="#34A853"
+                                selectionColor="#055FEE"
                             />
                         </View>
 
@@ -130,7 +130,7 @@ export const SignUpScreen = ({ navigation }: any) => {
                                 onChangeText={setEmail}
                                 autoCapitalize="none"
                                 keyboardType="email-address"
-                                selectionColor="#34A853"
+                                selectionColor="#055FEE"
                             />
                         </View>
 
@@ -144,7 +144,7 @@ export const SignUpScreen = ({ navigation }: any) => {
                                     value={password}
                                     onChangeText={setPassword}
                                     secureTextEntry={!showPassword}
-                                    selectionColor="#34A853"
+                                    selectionColor="#055FEE"
                                 />
                                 <TouchableOpacity 
                                     style={styles.eyeIcon} 
@@ -170,7 +170,7 @@ export const SignUpScreen = ({ navigation }: any) => {
                             disabled={loading}
                         >
                             <LinearGradient
-                                colors={['#34A853', '#2E9348']}
+                                colors={['#055FEE', '#5B99F2']}
                                 style={styles.gradientButton}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
@@ -246,8 +246,8 @@ const styles = StyleSheet.create({
         borderRadius: 8,
     },
     roleButtonActive: {
-        backgroundColor: '#34A853',
-        shadowColor: '#34A853',
+        backgroundColor: '#055FEE',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.3,
         shadowRadius: 4,
@@ -309,7 +309,7 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         overflow: 'hidden',
         elevation: 6,
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.4,
         shadowRadius: 8,
@@ -336,7 +336,7 @@ const styles = StyleSheet.create({
         fontSize: 14,
     },
     footerLink: {
-        color: '#34A853',
+        color: '#055FEE',
         fontWeight: 'bold',
         fontSize: 14,
     },

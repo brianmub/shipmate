@@ -138,7 +138,7 @@ export const JobOfferModal = ({ visible, onClose, order, onOfferSubmitted }: Job
                             <View style={{ alignItems: 'flex-end' }}>
                                 <Text style={styles.infoLabel}>Auto-Calculated ETA:</Text>
                                 {calculatingETA ? (
-                                    <ActivityIndicator size="small" color="#34A853" />
+                                    <ActivityIndicator size="small" color="#055FEE" />
                                 ) : (
                                     <Text style={styles.infoValue}>{calculatedETA} mins</Text>
                                 )}
@@ -165,7 +165,7 @@ export const JobOfferModal = ({ visible, onClose, order, onOfferSubmitted }: Job
                             disabled={loading || calculatingETA}
                         >
                             <LinearGradient
-                                colors={['#34A853', '#2E9348']}
+                                colors={['#055FEE', '#5B99F2']}
                                 style={styles.submitBtn}
                             >
                                 {loading ? (
@@ -232,7 +232,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         padding: 16,
-        backgroundColor: 'rgba(52, 168, 83, 0.1)',
+        backgroundColor: 'rgba(5, 95, 238, 0.1)',
         borderRadius: 16,
         marginBottom: 24,
     },
@@ -242,7 +242,7 @@ const styles = StyleSheet.create({
         fontWeight: '500',
     },
     infoValue: {
-        color: '#34A853',
+        color: '#055FEE',
         fontSize: 16,
         fontWeight: 'bold',
     },

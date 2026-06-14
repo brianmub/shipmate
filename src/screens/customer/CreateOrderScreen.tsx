@@ -327,7 +327,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
 
                                     {isScanning && (
                                         <View style={styles.scanningContainer}>
-                                            <ActivityIndicator color="#34A853" />
+                                            <ActivityIndicator color="#055FEE" />
                                             <Text style={styles.scanningText}>AI Analyzing Package...</Text>
                                         </View>
                                     )}
@@ -356,7 +356,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                         value={packageDescription}
                                         onChangeText={setPackageDescription}
                                         multiline
-                                        selectionColor="#34A853"
+                                        selectionColor="#055FEE"
                                     />
                                 </View>
                             ) : (
@@ -386,7 +386,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                         value={errandList}
                                         onChangeText={setErrandList}
                                         multiline
-                                        selectionColor="#34A853"
+                                        selectionColor="#055FEE"
                                     />
 
                                     <View style={styles.divider} />
@@ -437,7 +437,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                             disabled={loading}
                         >
                             <LinearGradient
-                                colors={['#34A853', '#2E9348']}
+                                colors={['#055FEE', '#5B99F2']}
                                 style={styles.submitGradient}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
@@ -510,7 +510,7 @@ const styles = StyleSheet.create({
     sectionTitle: {
         fontSize: 18,
         fontWeight: '700',
-        color: '#34A853',
+        color: '#055FEE',
     },
     divider: {
         height: 1,
@@ -576,8 +576,8 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         marginBottom: 24,
         borderWidth: 1,
-        borderColor: 'rgba(52, 168, 83, 0.2)',
-        shadowColor: '#34A853',
+        borderColor: 'rgba(176, 106, 40, 0.3)',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.05,
         shadowRadius: 8,
@@ -597,7 +597,7 @@ const styles = StyleSheet.create({
     summaryTitle: {
         fontSize: 22,
         fontWeight: '800',
-        color: '#34A853',
+        color: '#055FEE',
     },
     summaryText: {
         fontSize: 15,
@@ -607,7 +607,7 @@ const styles = StyleSheet.create({
     submitButtonContainer: {
         borderRadius: 16,
         overflow: 'hidden',
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.3,
         shadowRadius: 12,
@@ -663,16 +663,16 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(52, 168, 83, 0.1)',
+        backgroundColor: 'rgba(5, 95, 238, 0.1)',
         padding: 16,
         borderRadius: 16,
         marginBottom: 16,
         gap: 12,
         borderWidth: 1,
-        borderColor: 'rgba(52, 168, 83, 0.3)',
+        borderColor: 'rgba(176, 106, 40, 0.3)',
     },
     scanningText: {
-        color: '#34A853',
+        color: '#055FEE',
         fontWeight: '600',
     },
     previewContainer: {
@@ -707,7 +707,7 @@ const styles = StyleSheet.create({
         letterSpacing: 1,
     },
     aiBadgeValue: {
-        color: '#34A853',
+        color: '#055FEE',
         fontWeight: '900',
         fontSize: 14,
     },

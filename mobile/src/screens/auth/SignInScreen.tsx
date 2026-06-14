@@ -78,7 +78,7 @@ export const SignInScreen = ({ navigation }: any) => {
                                 onChangeText={setEmail}
                                 autoCapitalize="none"
                                 keyboardType="email-address"
-                                selectionColor="#34A853"
+                                selectionColor="#055FEE"
                             />
                         </View>
 
@@ -92,7 +92,7 @@ export const SignInScreen = ({ navigation }: any) => {
                                     value={password}
                                     onChangeText={setPassword}
                                     secureTextEntry={!showPassword}
-                                    selectionColor="#34A853"
+                                    selectionColor="#055FEE"
                                 />
                                 <TouchableOpacity 
                                     style={styles.eyeIcon} 
@@ -121,7 +121,7 @@ export const SignInScreen = ({ navigation }: any) => {
                             disabled={loading}
                         >
                             <LinearGradient
-                                colors={['#34A853', '#2E9348']}
+                                colors={['#055FEE', '#5B99F2']}
                                 style={styles.gradientButton}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
@@ -235,7 +235,7 @@ const styles = StyleSheet.create({
         marginBottom: 32,
     },
     forgotPasswordText: {
-        color: '#34A853',
+        color: '#055FEE',
         fontWeight: '600',
         fontSize: 14,
     },
@@ -243,7 +243,7 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         overflow: 'hidden',
         elevation: 6,
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.4,
         shadowRadius: 8,
@@ -270,7 +270,7 @@ const styles = StyleSheet.create({
         fontSize: 14,
     },
     footerLink: {
-        color: '#34A853',
+        color: '#055FEE',
         fontWeight: 'bold',
         fontSize: 14,
     },

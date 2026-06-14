@@ -72,7 +72,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
         return (
             <LinearGradient colors={['#F8FAFC', '#E2E8F0']} style={styles.safeArea}>
                 <View style={styles.centerContainer}>
-                    <ActivityIndicator size="large" color="#34A853" />
+                    <ActivityIndicator size="large" color="#055FEE" />
                 </View>
             </LinearGradient>
         );
@@ -120,12 +120,12 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                         <View style={styles.dragHandle} />
 
                         <View style={styles.titleRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(52, 168, 83, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
+                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(5, 95, 238, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
                                 <Text style={styles.serviceIcon}>{isDelivery ? '📦' : '🛒'}</Text>
                             </View>
                             <View>
                                 <Text style={styles.jobType}>{isDelivery ? 'Package Delivery' : 'Errand'}</Text>
-                                <Text style={styles.statusText}>
+                                <Text style={[styles.statusText, { color: (order.status === 'completed' || order.status === 'delivered') ? '#22C55E' : '#055FEE' }]}>
                                     {order.status === 'in_progress' ? 'Driver is on the way' :
                                         order.status === 'accepted' ? 'Driver is heading to pickup' :
                                             order.status === 'completed' ? 'Delivered' : 'Pending'}
@@ -207,8 +207,8 @@ const styles = StyleSheet.create({
     placeholderEmoji: { fontSize: 48, marginBottom: 16 },
     placeholderTitle: { fontSize: 18, fontWeight: 'bold', color: '#1E293B', textAlign: 'center', marginBottom: 8 },
     placeholderText: { fontSize: 14, color: '#64748B', textAlign: 'center', marginBottom: 20 },
-    statusBadge: { backgroundColor: '#34A85322', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
-    statusBadgeText: { fontSize: 14, fontWeight: 'bold', color: '#34A853' },
+    statusBadge: { backgroundColor: '#055FEE22', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
+    statusBadgeText: { fontSize: 14, fontWeight: 'bold', color: '#055FEE' },
 
     headerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 },
     headerBlur: { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.4)' },
@@ -231,7 +231,7 @@ const styles = StyleSheet.create({
     iconContainer: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
     serviceIcon: { fontSize: 20 },
     jobType: { fontSize: 20, fontWeight: '800', color: '#0F172A' },
-    statusText: { fontSize: 14, color: '#34A853', fontWeight: '600' },
+    statusText: { fontSize: 14, fontWeight: '600' },
 
     driverInfoCard: {
         flexDirection: 'row', alignItems: 'center',
@@ -250,7 +250,7 @@ const styles = StyleSheet.create({
     driverName: { fontSize: 18, fontWeight: '700', color: '#1E293B' },
     contactBtn: {
         width: 48, height: 48, borderRadius: 24,
-        backgroundColor: 'rgba(52, 168, 83, 0.1)', justifyContent: 'center', alignItems: 'center',
+        backgroundColor: 'rgba(5, 95, 238, 0.1)', justifyContent: 'center', alignItems: 'center',
     },
     contactIcon: { fontSize: 20 },
 

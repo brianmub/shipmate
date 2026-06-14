@@ -170,7 +170,7 @@ export const DriverOnboardingScreen = ({ navigation }: any) => {
                         disabled={loading}
                     >
                         <LinearGradient
-                            colors={['#34A853', '#2E9348']}
+                            colors={['#055FEE', '#5B99F2']}
                             style={styles.submitGradient}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 0 }}
@@ -281,8 +281,8 @@ const styles = StyleSheet.create({
         minHeight: 100,
     },
     uploadButtonSuccess: {
-        borderColor: 'rgba(52, 168, 83, 0.5)',
-        backgroundColor: 'rgba(52, 168, 83, 0.1)',
+        borderColor: 'rgba(5, 95, 238, 0.5)',
+        backgroundColor: 'rgba(5, 95, 238, 0.1)',
         borderStyle: 'solid',
     },
     uploadIcon: {
@@ -312,7 +312,7 @@ const styles = StyleSheet.create({
     submitButtonContainer: {
         borderRadius: 16,
         overflow: 'hidden',
-        shadowColor: '#34A853',
+        shadowColor: '#055FEE',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,

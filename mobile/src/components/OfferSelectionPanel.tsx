@@ -20,7 +20,7 @@ export const OfferSelectionPanel = ({ offers, onAccept, onSelect, loading }: Off
     if (loading && offers.length === 0) {
         return (
             <View style={styles.centerContainer}>
-                <ActivityIndicator color="#34A853" size="large" />
+                <ActivityIndicator color="#055FEE" size="large" />
                 <Text style={styles.loadingText}>Looking for couriers...</Text>
             </View>
         );
@@ -30,7 +30,7 @@ export const OfferSelectionPanel = ({ offers, onAccept, onSelect, loading }: Off
         return (
             <View style={styles.emptyContainer}>
                 <View style={styles.searchIcon}>
-                    <ActivityIndicator color="#34A853" size="small" />
+                    <ActivityIndicator color="#055FEE" size="small" />
                 </View>
                 <Text style={styles.emptyTitle}>Finding Couriers</Text>
                 <Text style={styles.emptySub}>Drivers are reviewing your request. Offers will appear here shortly.</Text>
@@ -87,7 +87,7 @@ export const OfferSelectionPanel = ({ offers, onAccept, onSelect, loading }: Off
                             onPress={() => onAccept(offer)}
                         >
                             <LinearGradient
-                                colors={['#34A853', '#2E9348']}
+                                colors={['#055FEE', '#5B99F2']}
                                 style={styles.acceptBtn}
                             >
                                 <Text style={styles.acceptBtnText}>Hire Courier</Text>
@@ -159,9 +159,9 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
     },
     selectedOfferCard: {
-        borderColor: '#34A853',
+        borderColor: '#055FEE',
         borderWidth: 2,
-        backgroundColor: 'rgba(52, 168, 83, 0.05)',
+        backgroundColor: 'rgba(5, 95, 238, 0.05)',
     },
     driverInfo: {
         flexDirection: 'row',

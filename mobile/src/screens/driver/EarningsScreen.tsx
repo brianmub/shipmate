@@ -76,7 +76,7 @@ export const EarningsScreen = ({ navigation }: any) => {
     };
 
     if (loading && !profile) {
-        return <View style={styles.center}><ActivityIndicator color="#34A853" size="large" /></View>;
+        return <View style={styles.center}><ActivityIndicator color="#055FEE" size="large" /></View>;
     }
 
     return (
@@ -131,12 +131,12 @@ export const EarningsScreen = ({ navigation }: any) => {
                                     <View style={styles.txLeft}>
                                         <View style={[
                                             styles.txIconContainer, 
-                                            { backgroundColor: tx.type === 'payout' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(52, 168, 83, 0.1)' }
+                                            { backgroundColor: tx.type === 'payout' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)' }
                                         ]}>
                                             <Ionicons 
-                                                name={tx.type === 'payout' ? "arrow-up" : "arrow-down"} 
-                                                size={18} 
-                                                color={tx.type === 'payout' ? "#EF4444" : "#34A853"} 
+                                                name={tx.type === 'payout' ? "arrow-up" : "arrow-down"}
+                                                size={18}
+                                                color={tx.type === 'payout' ? "#EF4444" : "#22C55E"} 
                                             />
                                         </View>
                                         <View style={{ marginLeft: 12 }}>
@@ -154,7 +154,7 @@ export const EarningsScreen = ({ navigation }: any) => {
                                     </View>
                                     <Text style={[
                                         styles.txAmount, 
-                                        { color: tx.type === 'payout' ? "#EF4444" : "#34A853" }
+                                        { color: tx.type === 'payout' ? "#EF4444" : "#22C55E" }
                                     ]}>
                                         {tx.type === 'payout' ? '-' : '+'}${tx.amount.toFixed(2)}
                                     </Text>
@@ -178,11 +178,11 @@ const styles = StyleSheet.create({
     backBtn: { padding: 8 },
     headerTitle: { fontSize: 20, fontWeight: '800', color: '#FFF' },
     content: { padding: 20 },
-    balanceCard: { backgroundColor: '#34A853', borderRadius: 24, padding: 32, alignItems: 'center', marginBottom: 24 },
+    balanceCard: { backgroundColor: '#055FEE', borderRadius: 24, padding: 32, alignItems: 'center', marginBottom: 24 },
     balanceLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 16, marginBottom: 8 },
     balanceValue: { color: '#FFF', fontSize: 48, fontWeight: '900', marginBottom: 24 },
     payoutBtn: { backgroundColor: '#FFF', paddingHorizontal: 32, paddingVertical: 12, borderRadius: 12 },
-    payoutTxt: { color: '#34A853', fontWeight: '700' },
+    payoutTxt: { color: '#055FEE', fontWeight: '700' },
     statsGrid: { flexDirection: 'row', gap: 16, marginBottom: 16 },
     miniCard: { flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
     miniLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 13, marginBottom: 4 },

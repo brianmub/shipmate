@@ -49,7 +49,7 @@ export const FleetMapScreen = () => {
     if (loading) {
         return (
             <View style={styles.center}>
-                <ActivityIndicator color="#34A853" size="large" />
+                <ActivityIndicator color="#055FEE" size="large" />
             </View>
         );
     }
@@ -107,7 +107,7 @@ export const FleetMapScreen = () => {
                                     { latitude: order.driver_latitude, longitude: order.driver_longitude },
                                     { latitude: parseFloat(order.dropoff_latitude), longitude: parseFloat(order.dropoff_longitude) }
                                 ]}
-                                strokeColor="#34A853"
+                                strokeColor="#055FEE"
                                 strokeWidth={2}
                                 lineDashPattern={[5, 5]}
                             />
@@ -130,7 +130,7 @@ export const FleetMapScreen = () => {
             <View style={styles.legendOverlay}>
                 <BlurView intensity={80} tint="light" style={styles.legendBlur}>
                     <View style={styles.legendItem}>
-                        <View style={[styles.dot, { backgroundColor: '#34A853' }]} />
+                        <View style={[styles.dot, { backgroundColor: '#055FEE' }]} />
                         <Text style={styles.legendText}>Active Driver</Text>
                     </View>
                     <View style={styles.legendItem}>
@@ -152,7 +152,7 @@ const styles = StyleSheet.create({
     headerContent: { padding: 20, paddingTop: Platform.OS === 'android' ? 20 : 10 },
     headerTitle: { fontSize: 24, fontWeight: '800', color: '#0F172A' },
     headerSubtitle: { fontSize: 14, color: '#64748B', marginTop: 4 },
-    driverMarkerOuter: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(52, 168, 83, 0.2)', justifyContent: 'center', alignItems: 'center' },
+    driverMarkerOuter: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(176, 106, 40, 0.3)', justifyContent: 'center', alignItems: 'center' },
     driverMarkerInner: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
     legendOverlay: { position: 'absolute', bottom: 40, right: 20 },
     legendBlur: { padding: 12, borderRadius: 16, gap: 8, borderWidth: 1, borderColor: 'rgba(0,0,0,0.05)', overflow: 'hidden' },

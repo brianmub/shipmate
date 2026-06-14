@@ -85,11 +85,11 @@ export const AdminDashboard = ({ navigation }: any) => {
                     </View>
 
                     {loading ? (
-                        <ActivityIndicator color="#34A853" size="large" style={{ marginTop: 40 }} />
+                        <ActivityIndicator color="#055FEE" size="large" style={{ marginTop: 40 }} />
                     ) : (
                         <>
                             <View style={styles.statsGrid}>
-                                <StatCard title="Active Orders" value={stats.activeOrders} icon="⚡" color="#34A853" />
+                                <StatCard title="Active Orders" value={stats.activeOrders} icon="⚡" color="#055FEE" />
                                 <StatCard title="Total Orders" value={stats.totalOrders} icon="📦" color="#60A5FA" />
                             </View>
 
@@ -105,7 +105,7 @@ export const AdminDashboard = ({ navigation }: any) => {
                                 onPress={() => navigation.navigate('Orders')}
                             >
                                 <LinearGradient
-                                    colors={['rgba(52, 168, 83, 0.1)', 'rgba(52, 168, 83, 0.05)']}
+                                    colors={['rgba(5, 95, 238, 0.1)', 'rgba(5, 95, 238, 0.05)']}
                                     style={styles.actionGradient}
                                 >
                                     <View style={styles.actionInfo}>
@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
     headerTitle: { fontSize: 32, fontWeight: '800', color: '#FFFFFF', letterSpacing: -0.5 },
     headerSubtitle: { fontSize: 16, color: '#94A3B8' },
     refreshBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
-    refreshIcon: { color: '#34A853', fontSize: 24 },
+    refreshIcon: { color: '#055FEE', fontSize: 24 },
     statsGrid: { flexDirection: 'row', gap: 16, marginBottom: 16 },
     statCard: { flex: 1, padding: 20, borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' },
     iconBox: { width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
@@ -161,5 +161,5 @@ const styles = StyleSheet.create({
     actionInfo: { flex: 1 },
     actionTitle: { fontSize: 18, fontWeight: '700', color: '#FFFFFF', marginBottom: 4 },
     actionDesc: { fontSize: 14, color: '#94A3B8' },
-    actionArrow: { fontSize: 24, color: '#34A853', fontWeight: 'bold' },
+    actionArrow: { fontSize: 24, color: '#055FEE', fontWeight: 'bold' },
 });

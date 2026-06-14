@@ -40,7 +40,7 @@ export const OrderHistoryScreen = ({ navigation }: any) => {
             <BlurView intensity={40} tint="light" style={styles.orderCard}>
                 <View style={styles.cardHeader}>
                     <View style={styles.serviceTypeRow}>
-                        <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(52, 168, 83, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
+                        <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(5, 95, 238, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
                             <Text style={styles.serviceIcon}>{isDelivery ? '📦' : '🛒'}</Text>
                         </View>
                         <View>
@@ -87,7 +87,7 @@ export const OrderHistoryScreen = ({ navigation }: any) => {
                         <TouchableOpacity
                             style={[
                                 styles.detailsButton,
-                                { backgroundColor: item.status === 'pending' ? '#F59E0B' : '#34A853' }
+                                { backgroundColor: item.status === 'pending' ? '#F59E0B' : (item.status === 'completed' || item.status === 'delivered') ? '#22C55E' : '#055FEE' }
                             ]}
                             onPress={() => navigation.navigate('CustomerTracking', { orderId: item.id })}
                         >
@@ -126,7 +126,7 @@ export const OrderHistoryScreen = ({ navigation }: any) => {
 
                 {loading ? (
                     <View style={styles.centerContainer}>
-                        <ActivityIndicator size="large" color="#34A853" />
+                        <ActivityIndicator size="large" color="#055FEE" />
                     </View>
                 ) : orders.length === 0 ? (
                     <View style={styles.centerContainer}>
@@ -193,7 +193,7 @@ const styles = StyleSheet.create({
     },
     refreshText: {
         fontSize: 24,
-        color: '#34A853',
+        color: '#055FEE',
     },
     centerContainer: {
         flex: 1,
@@ -279,13 +279,13 @@ const styles = StyleSheet.create({
     },
     status_pending: { backgroundColor: 'rgba(245, 158, 11, 0.15)' },
     status_accepted: { backgroundColor: 'rgba(59, 130, 246, 0.15)' },
-    status_completed: { backgroundColor: 'rgba(16, 185, 129, 0.15)' },
+    status_completed: { backgroundColor: 'rgba(34, 197, 94, 0.15)' },
     status_cancelled: { backgroundColor: 'rgba(239, 68, 68, 0.15)' },
 
     statusText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
     statusText_pending: { color: '#D97706' },
     statusText_accepted: { color: '#2563EB' },
-    statusText_completed: { color: '#059669' },
+    statusText_completed: { color: '#22C55E' },
     statusText_cancelled: { color: '#DC2626' },
 
     locationContainer: {
@@ -341,7 +341,7 @@ const styles = StyleSheet.create({
     price: {
         fontSize: 20,
         fontWeight: '800',
-        color: '#34A853',
+        color: '#055FEE',
     },
     detailsButton: {
         paddingVertical: 10,

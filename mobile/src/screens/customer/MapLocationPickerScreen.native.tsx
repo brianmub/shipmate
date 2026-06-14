@@ -75,9 +75,9 @@ export const MapLocationPickerScreen = ({ route, navigation }: any) => {
                 .limit(5);
 
             if (data) {
-                const unique = Array.from(new Set(data.map(a => 
+                const unique = Array.from(new Set((data as any[]).map(a => 
                     locationType === 'pickup' ? a.pickup_address : a.dropoff_address
-                ))).map(address => data.find(a => 
+                ))).map(address => (data as any[]).find(a => 
                     (locationType === 'pickup' ? a.pickup_address : a.dropoff_address) === address
                 ));
                 setRecentLocations(unique);
@@ -166,7 +166,7 @@ export const MapLocationPickerScreen = ({ route, navigation }: any) => {
                     style={styles.map}
                     region={region}
                     onRegionChangeComplete={setRegion}
-                    onPress={(e) => setSelectedCoordinate(e.nativeEvent.coordinate)}
+                    onPress={(e: any) => setSelectedCoordinate(e.nativeEvent.coordinate)}
                     showsUserLocation={true}
                     showsMyLocationButton={false}
                 >
@@ -184,7 +184,7 @@ export const MapLocationPickerScreen = ({ route, navigation }: any) => {
                     onPress={getCurrentLocation}
                     activeOpacity={0.8}
                 >
-                    {locating ? <ActivityIndicator color="#34A853" /> : <Ionicons name="locate" size={24} color="#34A853" />}
+                    {locating ? <ActivityIndicator color="#055FEE" /> : <Ionicons name="locate" size={24} color="#055FEE" />}
                 </TouchableOpacity>
 
                 <View style={styles.addressInputContainer}>
@@ -196,7 +196,7 @@ export const MapLocationPickerScreen = ({ route, navigation }: any) => {
                             value={physicalAddress}
                             onChangeText={setPhysicalAddress}
                         />
-                        <Ionicons name="location" size={20} color="#34A853" style={styles.inputIcon} />
+                        <Ionicons name="location" size={20} color="#055FEE" style={styles.inputIcon} />
                     </View>
                 </View>
             </View>
@@ -227,7 +227,7 @@ export const MapLocationPickerScreen = ({ route, navigation }: any) => {
                     onPress={handleConfirmLocation}
                     disabled={!selectedCoordinate}
                 >
-                    <LinearGradient colors={['#34A853', '#2E9348']} style={styles.btnGradient}>
+                    <LinearGradient colors={['#055FEE', '#5B99F2']} style={styles.btnGradient}>
                         <Text style={styles.confirmButtonText}>Confirm This Location</Text>
                     </LinearGradient>
                 </TouchableOpacity>
@@ -284,7 +284,7 @@ const styles = StyleSheet.create({
     recentChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, gap: 8, maxWidth: 200 },
     recentChipText: { fontSize: 14, color: '#475569', fontWeight: '600' },
     noHistory: { marginLeft: 24, color: '#94A3B8', fontSize: 14 },
-    confirmButton: { marginHorizontal: 24, borderRadius: 16, overflow: 'hidden', elevation: 8, shadowColor: '#34A853', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 12 },
+    confirmButton: { marginHorizontal: 24, borderRadius: 16, overflow: 'hidden', elevation: 8, shadowColor: '#055FEE', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 12 },
     confirmButtonDisabled: { opacity: 0.5 },
     btnGradient: { height: 60, justifyContent: 'center', alignItems: 'center' },
     confirmButtonText: { color: '#FFF', fontSize: 18, fontWeight: '800', letterSpacing: 0.5 },
