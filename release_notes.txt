@@ -1,0 +1,13 @@
+# Release Notes - Initial Release (1.0.0)
+
+Welcome to the first release of ShipMate!
+
+In this initial version, we are introducing our core features to connect customers with drivers for seamless logistics and delivery services.
+
+Key Features in this release:
+- **Customer App**: Easily request deliveries, track your shipments in real-time, and manage your delivery history.
+- **Driver App**: Accept delivery requests, navigate to pickup and drop-off locations, and track your earnings.
+- **Secure Authentication**: Secure login and registration for all users.
+- **Real-time Updates**: Get live status updates on your orders.
+
+Thank you for choosing ShipMate. We are continuously working to improve your experience. If you encounter any issues or have feedback, please reach out to our support team.
