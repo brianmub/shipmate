@@ -1,14 +1,19 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-primary: #055FEE;
-  --color-brand-secondary: #172029;
-  --color-brand-accent: #B06A28;
+  --color-brand-primary: #2D5FE0; /* Royal Blue */
+  --color-brand-secondary: #0B1F4D; /* Navy */
+  --color-brand-accent: #F2A33D; /* Accent Orange */
   
-  /* Override Tailwind emerald classes to match the branding colors */
-  --color-emerald-500: #055FEE;
-  --color-emerald-400: #5B99F2;
-  --color-emerald-600: #044BBD;
+  --color-brand-navy: #0B1F4D;
+  --color-brand-blue: #2D5FE0;
+  --color-brand-orange: #F2A33D;
+  --color-brand-bg-light: #F5F7FA;
+  
+  /* Override Tailwind emerald classes to match the royal blue branding colors */
+  --color-emerald-500: #2D5FE0;
+  --color-emerald-400: #5B82F2;
+  --color-emerald-600: #1C48B5;
 }
 
 html, body, #root {

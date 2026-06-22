@@ -7,7 +7,8 @@ import {
     DollarSign, 
     MapPin, 
     Bell,
-    CheckCircle2
+    CheckCircle2,
+    Cpu
 } from 'lucide-react';
 
 export const Settings = () => {
@@ -17,6 +18,10 @@ export const Settings = () => {
         per_km_rate: 1.50,
         max_driver_radius: 10,
         min_payout_threshold: 50.00
+    });
+    const [aiSettings, setAiSettings] = useState({
+        document_verification_enabled: false,
+        prescreening_chat_enabled: false
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -36,6 +41,21 @@ export const Settings = () => {
 
             if (error && error.code !== 'PGRST116') throw error;
             if (data) setSettings(data);
+
+            // Fetch app settings
+            const { data: aiData, error: aiError } = await supabase
+                .from('app_settings')
+                .select('*');
+
+            if (aiError) throw aiError;
+            if (aiData) {
+                const docVerif = aiData.find((s: any) => s.feature_key === 'document_verification_enabled')?.enabled ?? false;
+                const preScreen = aiData.find((s: any) => s.feature_key === 'prescreening_chat_enabled')?.enabled ?? false;
+                setAiSettings({
+                    document_verification_enabled: docVerif,
+                    prescreening_chat_enabled: preScreen
+                });
+            }
         } catch (error) {
             console.error('Error fetching settings:', error);
         } finally {
@@ -47,17 +67,38 @@ export const Settings = () => {
         try {
             setSaving(true);
             setSuccess(false);
+
+            // Save main settings
             const { error } = await supabase
                 .from('system_settings')
                 .upsert({ id: 1, ...settings });
 
             if (error) throw error;
+
+            // Save AI settings
+            const { error: aiDocError } = await supabase
+                .from('app_settings')
+                .upsert({ 
+                    feature_key: 'document_verification_enabled', 
+                    enabled: aiSettings.document_verification_enabled,
+                    updated_at: new Date().toISOString()
+                });
+            if (aiDocError) throw aiDocError;
+
+            const { error: aiScreenError } = await supabase
+                .from('app_settings')
+                .upsert({ 
+                    feature_key: 'prescreening_chat_enabled', 
+                    enabled: aiSettings.prescreening_chat_enabled,
+                    updated_at: new Date().toISOString()
+                });
+            if (aiScreenError) throw aiScreenError;
             
             setSuccess(true);
             setTimeout(() => setSuccess(false), 3000);
         } catch (error) {
             console.error('Error saving settings:', error);
-            alert('Failed to save settings. Check if the "system_settings" table exists.');
+            alert('Failed to save settings.');
         } finally {
             setSaving(false);
         }
@@ -90,6 +131,24 @@ export const Settings = () => {
                 />
                 {suffix && <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 font-medium text-sm">{suffix}</span>}
             </div>
+        </div>
+    );
+
+    const ToggleField = ({ label, description, checked, onChange }: any) => (
+        <div className="flex items-center justify-between p-5 bg-slate-900/40 border border-slate-800 rounded-2xl">
+            <div className="flex-1 pr-6">
+                <span className="text-sm font-bold text-white block">{label}</span>
+                <span className="text-xs text-slate-450 block mt-1.5 leading-relaxed">{description}</span>
+            </div>
+            <button
+                type="button"
+                onClick={() => onChange(!checked)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${checked ? 'bg-emerald-500 animate-pulse' : 'bg-slate-750'}`}
+            >
+                <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${checked ? 'translate-x-5' : 'translate-x-0'}`}
+                />
+            </button>
         </div>
     );
 
@@ -163,6 +222,21 @@ export const Settings = () => {
                         value={settings.max_driver_radius}
                         onChange={(val: any) => setSettings({...settings, max_driver_radius: val})}
                         suffix="KM"
+                    />
+                </SettingGroup>
+
+                <SettingGroup title="AI Automation & Screening" icon={Cpu}>
+                    <ToggleField 
+                        label="AI Document Verification" 
+                        description="Automatically scan and validate Zimbabwean National ID and Driver's License uploads using AI."
+                        checked={aiSettings.document_verification_enabled}
+                        onChange={(val: any) => setAiSettings({...aiSettings, document_verification_enabled: val})}
+                    />
+                    <ToggleField 
+                        label="AI Pre-Screening Chat" 
+                        description="Require driver applicants to complete a structured Q&A chat evaluated by AI before manual review."
+                        checked={aiSettings.prescreening_chat_enabled}
+                        onChange={(val: any) => setAiSettings({...aiSettings, prescreening_chat_enabled: val})}
                     />
                 </SettingGroup>
 

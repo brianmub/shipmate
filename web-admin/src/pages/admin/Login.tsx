@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { supabase } from '../utils/supabase';
-import { useAuthStore } from '../store/authStore';
+import { supabase } from '../../utils/supabase';
+import { useAuthStore } from '../../store/authStore';
 import { useNavigate } from 'react-router-dom';
-import { Lock, Mail, Loader2, Ship } from 'lucide-react';
+import { Lock, Mail, Loader2, Ship, AlertCircle } from 'lucide-react';
 
 export const Login = () => {
     const [email, setEmail] = useState('');
@@ -10,7 +10,7 @@ export const Login = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     
-    const { setSession, setUser, setRole } = useAuthStore();
+    const { setSession, setUser, setRole, setInitialized } = useAuthStore();
     const navigate = useNavigate();
 
     const handleLogin = async (e: React.FormEvent) => {
@@ -27,46 +27,64 @@ export const Login = () => {
             if (signInError) throw signInError;
 
             if (data.session) {
-                // Check if user is an admin
+                // Fetch user profile role
                 const { data: profile, error: profileError } = await supabase
                     .from('users')
                     .select('role')
                     .eq('id', data.session.user.id)
                     .single();
 
-                if (profileError) throw profileError;
+                if (profileError) {
+                    await supabase.auth.signOut();
+                    throw new Error('Failed to retrieve user profile.');
+                }
 
                 if (profile.role !== 'admin') {
                     await supabase.auth.signOut();
-                    throw new Error('Unauthorized. Only admins can access this portal.');
+                    throw new Error('Unauthorized. Only admins can access the admin dashboard.');
                 }
 
                 setSession(data.session);
                 setUser(data.session.user);
                 setRole(profile.role);
-                navigate('/');
+                setInitialized(true);
+                navigate('/admin/dashboard');
             }
         } catch (err: any) {
             setError(err.message || 'Failed to login');
+            await supabase.auth.signOut();
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4">
-            <div className="w-full max-w-md bg-slate-800/50 border border-slate-700 p-10 rounded-[2.5rem] backdrop-blur-xl shadow-2xl">
-                <div className="flex flex-col items-center mb-10">
-                    <div className="w-16 h-16 bg-emerald-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-emerald-500/20">
-                        <Ship className="w-10 h-10 text-white" />
+        <div className="min-h-screen flex items-center justify-center bg-[#0B1F4D] p-4 font-sans relative overflow-hidden">
+            {/* Background decorative circles */}
+            <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-brand-blue/15 blur-3xl" />
+            <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full bg-brand-orange/10 blur-3xl" />
+
+            <div className="w-full max-w-md bg-slate-900/80 border border-slate-800 p-8 sm:p-10 rounded-[2.5rem] backdrop-blur-xl shadow-2xl z-10">
+                <div className="flex flex-col items-center mb-8">
+                    {/* Logo Graphic */}
+                    <div className="w-16 h-16 bg-brand-blue rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-brand-blue/25">
+                        <Ship className="w-9 h-9 text-white" />
                     </div>
-                    <h1 className="text-3xl font-extrabold text-white tracking-tight">ShipMate Admin</h1>
-                    <p className="text-slate-400 mt-2">Manage your delivery ecosystem</p>
+                    
+                    {/* Branding */}
+                    <h1 className="text-3xl font-black text-white tracking-tight flex items-center">
+                        SHIP<span className="text-brand-blue">MATE</span>
+                    </h1>
+                    <div className="flex items-center gap-1.5 mt-2 bg-brand-orange/10 px-3 py-1 rounded-full border border-brand-orange/20 text-brand-orange text-xs font-bold uppercase tracking-wider">
+                        <Lock className="w-3.5 h-3.5" />
+                        Admin Portal
+                    </div>
                 </div>
 
                 {error && (
-                    <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-2xl text-sm mb-6 text-center">
-                        {error}
+                    <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-2xl text-sm mb-6 flex items-start gap-3">
+                        <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                        <span>{error}</span>
                     </div>
                 )}
 
@@ -80,7 +98,7 @@ export const Login = () => {
                                 placeholder="admin@shipmate.com"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
-                                className="w-full bg-slate-900/50 border border-slate-700 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+                                className="w-full bg-slate-950/40 border border-slate-800 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-slate-650 focus:outline-none focus:ring-2 focus:ring-brand-blue/50 focus:border-brand-blue transition-all"
                                 required
                             />
                         </div>
@@ -95,7 +113,7 @@ export const Login = () => {
                                 placeholder="••••••••"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className="w-full bg-slate-900/50 border border-slate-700 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+                                className="w-full bg-slate-950/40 border border-slate-800 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-slate-650 focus:outline-none focus:ring-2 focus:ring-brand-blue/50 focus:border-brand-blue transition-all"
                                 required
                             />
                         </div>
@@ -104,7 +122,7 @@ export const Login = () => {
                     <button 
                         type="submit" 
                         disabled={loading}
-                        className="w-full bg-emerald-500 hover:bg-emerald-400 text-white font-bold py-4 rounded-2xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center group disabled:opacity-50 disabled:cursor-not-allowed mt-4"
+                        className="w-full bg-brand-blue hover:bg-brand-blue/90 text-white font-bold py-4 rounded-2xl shadow-lg shadow-brand-blue/20 transition-all flex items-center justify-center group disabled:opacity-50 disabled:cursor-not-allowed mt-4 cursor-pointer"
                     >
                         {loading ? (
                             <Loader2 className="w-6 h-6 animate-spin" />
@@ -116,6 +134,15 @@ export const Login = () => {
                         )}
                     </button>
                 </form>
+                
+                <div className="text-center mt-6">
+                    <button
+                        onClick={() => navigate('/')}
+                        className="text-sm text-slate-450 hover:text-white transition-colors"
+                    >
+                        ← Back to marketing site
+                    </button>
+                </div>
             </div>
         </div>
     );

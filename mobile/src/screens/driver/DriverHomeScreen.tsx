@@ -51,7 +51,7 @@ const darkMapStyle = [
 
 export const DriverHomeScreen = ({ navigation }: any) => {
     const { user, verificationStatus } = useAuthStore();
-    const [isOnline, setIsOnline] = useState(false);
+    const [isOnline, setIsOnline] = useState(true);
     const [profile, setProfile] = useState<any>(null);
     const [loading, setLoading] = useState(true);
 
@@ -81,7 +81,7 @@ export const DriverHomeScreen = ({ navigation }: any) => {
             setLoading(true);
             const data = await userService.getDriverProfile(user.id);
             setProfile(data);
-            setIsOnline(data.is_online);
+            setIsOnline(data.is_online ?? true);
         } catch (error) {
             console.error('Error fetching driver profile:', error);
         } finally {
@@ -95,10 +95,6 @@ export const DriverHomeScreen = ({ navigation }: any) => {
     }, []);
 
     const toggleOnline = async () => {
-        if (!isApproved) {
-            Alert.alert('Account Pending', 'You can go online once your account is approved.');
-            return;
-        }
         const nextState = !isOnline;
         setIsOnline(nextState);
         try {
@@ -138,7 +134,6 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                                 ios_backgroundColor="rgba(255,255,255,0.2)"
                                 onValueChange={toggleOnline}
                                 value={isOnline}
-                                disabled={!isApproved}
                             />
                         </BlurView>
                     </View>
@@ -209,7 +204,7 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                     <View style={styles.statsGrid}>
                         <BlurView intensity={20} tint="light" style={styles.statCardContainer}>
                             <Text style={styles.statLabel}>Earnings</Text>
-                            <Text style={styles.statValue}>${profile?.available_balance?.toFixed(2) || '0.00'}</Text>
+                            <Text style={[styles.statValue, styles.earningsValue]}>${profile?.available_balance?.toFixed(2) || '0.00'}</Text>
                         </BlurView>
                         <BlurView intensity={20} tint="light" style={styles.statCardContainer}>
                             <Text style={styles.statLabel}>Deliveries</Text>
@@ -237,16 +232,16 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                             style={styles.jobsButtonContainer}
                             activeOpacity={0.8}
                             onPress={() => navigation.navigate('Jobs')}
-                            disabled={!isOnline || !isApproved}
+                            disabled={!isOnline}
                         >
                             <LinearGradient
-                                colors={isOnline && isApproved ? ['#055FEE', '#5B99F2'] : ['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
+                                colors={isOnline ? ['#055FEE', '#5B99F2'] : ['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
                                 style={styles.jobsGradient}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
                             >
-                                <Text style={[styles.jobsButtonText, (!isOnline || !isApproved) && styles.jobsButtonTextOffline]}>
-                                    {isApproved ? (isOnline ? 'View Available Jobs' : 'Go Online to View Jobs') : 'Account Pending Approval'}
+                                <Text style={[styles.jobsButtonText, !isOnline && styles.jobsButtonTextOffline]}>
+                                    {isOnline ? 'View Available Jobs' : 'Go Online to View Jobs'}
                                 </Text>
                             </LinearGradient>
                         </TouchableOpacity>
@@ -285,7 +280,7 @@ const styles = StyleSheet.create({
     },
     greetingSubtitle: {
         fontSize: 16,
-        color: 'rgba(255,255,255,0.7)',
+        color: '#E2E8F0',
     },
     toggleContainer: {
         flexDirection: 'row',
@@ -304,10 +299,10 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
     statusOnline: {
-        color: '#055FEE',
+        color: '#10B981',
     },
     statusOffline: {
-        color: 'rgba(255,255,255,0.5)',
+        color: '#E2E8F0',
     },
     offlineWarning: {
         flexDirection: 'row',
@@ -397,14 +392,17 @@ const styles = StyleSheet.create({
     },
     statLabel: {
         fontSize: 14,
-        color: 'rgba(255,255,255,0.7)',
+        color: '#CBD5E1',
         marginBottom: 8,
-        fontWeight: '500',
+        fontWeight: '600',
     },
     statValue: {
         fontSize: 28,
         fontWeight: '800',
-        color: '#055FEE',
+        color: '#38BDF8',
+    },
+    earningsValue: {
+        color: '#34D399',
     },
     row: {
         flexDirection: 'row',
@@ -500,7 +498,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0,0,0,0.2)',
     },
     mapFooterText: {
-        color: 'rgba(255,255,255,0.5)',
+        color: '#94A3B8',
         fontSize: 12,
         textAlign: 'center',
     },

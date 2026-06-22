@@ -5,6 +5,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../../store/authStore';
 import { verificationService } from '../../../services/verificationService';
+import { userService } from '../../../services/userService';
+import { supabase } from '../../../utils/supabase';
+
 
 export const VehiclePhotosScreen = ({ navigation }: any) => {
     const { user, setVerificationStatus } = useAuthStore();
@@ -41,23 +44,58 @@ export const VehiclePhotosScreen = ({ navigation }: any) => {
     const handleSubmit = async () => {
         try {
             if (!user) return;
-            // Set status to pending in database
-            await verificationService.updateDriverDetails(user.id, { verification_status: 'pending' });
-            
-            // Update local state to trigger navigator change
-            setVerificationStatus('pending');
 
-            Alert.alert(
-                "Application Submitted",
-                "Your driver application is now under review. We will notify you once approved!",
-                [{ text: "Great!", onPress: () => {
-                    try {
-                        navigation.navigate('Dashboard');
-                    } catch (e) {
-                        // State change will handle navigation if needed
+            // Fetch app settings to check if pre-screening chat is enabled
+            const settings = await userService.getAppSettings();
+            const isChatEnabled = settings?.find(s => s.feature_key === 'prescreening_chat_enabled')?.enabled ?? false;
+
+            if (isChatEnabled) {
+                // Route to PreScreeningChat screen
+                navigation.navigate('PreScreeningChat');
+            } else {
+                // Pre-screening chat is disabled, skip straight to pending submit
+
+                // Update application screening status to skipped in database
+                await supabase.from('driver_applications').upsert({
+                    id: user.id,
+                    screening_status: 'skipped',
+                    updated_at: new Date().toISOString()
+                });
+
+                // Trigger document verification asynchronously in background
+                const supabaseUrl = 'https://lgnhcfppovtwxtmjyfty.supabase.co';
+                const idImageUrl = `${supabaseUrl}/storage/v1/object/public/verification-docs/drivers/${user.id}/national_id_front.jpg`;
+                const licenseImageUrl = `${supabaseUrl}/storage/v1/object/public/verification-docs/drivers/${user.id}/license_front.jpg`;
+
+                console.log("Triggering document verification in background (screening skipped)...");
+                supabase.functions.invoke('verify-driver-documents', {
+                    body: {
+                        applicantId: user.id,
+                        idImageUrl,
+                        licenseImageUrl
                     }
-                }}]
-            );
+                }).catch(err => {
+                    console.error("Background document verification trigger failed:", err);
+                });
+
+                // Set status to pending in database
+                await verificationService.updateDriverDetails(user.id, { verification_status: 'pending' });
+                
+                // Update local state to trigger navigator change
+                setVerificationStatus('pending');
+
+                Alert.alert(
+                    "Application Submitted",
+                    "Your driver application is now under review. We will notify you once approved!",
+                    [{ text: "Great!", onPress: () => {
+                        try {
+                            navigation.navigate('Dashboard');
+                        } catch (e) {
+                            // State change will handle navigation if needed
+                        }
+                    }}]
+                );
+            }
         } catch (error: any) {
             Alert.alert('Submission Error', error.message);
         }

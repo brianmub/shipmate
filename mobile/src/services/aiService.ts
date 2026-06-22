@@ -26,7 +26,7 @@ export const aiService = {
             return estimates[Math.floor(Math.random() * estimates.length)];
         }
 
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
         
         const response = await fetch(endpoint, {
             method: 'POST',

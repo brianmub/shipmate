@@ -9,10 +9,12 @@ interface AuthState {
     user: User | null;
     role: UserRole;
     verificationStatus: VerificationStatus;
+    initialized: boolean;
     setSession: (session: Session | null) => void;
     setUser: (user: User | null) => void;
     setRole: (role: UserRole) => void;
     setVerificationStatus: (status: VerificationStatus) => void;
+    setInitialized: (initialized: boolean) => void;
     signOut: () => void;
 }
 
@@ -21,9 +23,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     user: null,
     role: null,
     verificationStatus: null,
+    initialized: false,
     setSession: (session) => set({ session }),
     setUser: (user) => set({ user }),
     setRole: (role) => set({ role }),
     setVerificationStatus: (status) => set({ verificationStatus: status }),
-    signOut: () => set({ session: null, user: null, role: null, verificationStatus: null }),
+    setInitialized: (initialized) => set({ initialized }),
+    signOut: () => {
+        set({ session: null, user: null, role: null, verificationStatus: null });
+    },
 }));

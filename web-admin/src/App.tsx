@@ -1,16 +1,31 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AdminDashboard } from './pages/AdminDashboard';
-import { Login } from './pages/Login';
-import { OrderLog } from './pages/OrderLog';
-import { Settings } from './pages/Settings';
-import { FleetMap } from './pages/FleetMap';
-import { Sidebar } from './components/Sidebar';
+import { Landing } from './pages/Landing';
 import { useAuthStore } from './store/authStore';
 import { supabase } from './utils/supabase';
+import { Loader2 } from 'lucide-react';
+
+// Lazy-loaded Admin pages/layouts for code-splitting
+const Login = lazy(() => import('./pages/admin/Login').then(m => ({ default: m.Login })));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
+const OrderLog = lazy(() => import('./pages/OrderLog').then(m => ({ default: m.OrderLog })));
+const FleetMap = lazy(() => import('./pages/FleetMap').then(m => ({ default: m.FleetMap })));
+const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
+const UserManagement = lazy(() => import('./pages/admin/UserManagement').then(m => ({ default: m.UserManagement })));
+const Privacy = lazy(() => import('./pages/Privacy').then(m => ({ default: m.Privacy })));
+const Unauthorized = lazy(() => import('./pages/admin/Unauthorized').then(m => ({ default: m.Unauthorized })));
+const AdminRoute = lazy(() => import('./routes/AdminRoute').then(m => ({ default: m.AdminRoute })));
+const AdminLayout = lazy(() => import('./components/AdminLayout').then(m => ({ default: m.AdminLayout })));
+
+const AdminLoading = () => (
+  <div className="min-h-screen flex flex-col items-center justify-center bg-[#0F172A] text-slate-100">
+    <Loader2 className="w-10 h-10 text-brand-blue animate-spin mb-3" />
+    <p className="text-slate-400 text-sm font-medium animate-pulse">Loading panel...</p>
+  </div>
+);
 
 function App() {
-  const { session, setSession, setUser, setRole } = useAuthStore();
+  const { session, setSession, setUser, setRole, setInitialized } = useAuthStore();
 
   useEffect(() => {
     // Check initial session
@@ -24,10 +39,18 @@ function App() {
           .select('role')
           .eq('id', session.user.id)
           .single()
-          .then(({ data }) => {
+          .then(({ data, error }) => {
             if (data) setRole(data.role);
+            setInitialized(true);
+          })
+          .catch(() => {
+            setInitialized(true);
           });
+      } else {
+        setInitialized(true);
       }
+    }).catch(() => {
+      setInitialized(true);
     });
 
     // Listen for auth changes
@@ -41,7 +64,15 @@ function App() {
           .single()
           .then(({ data }) => {
             if (data) setRole(data.role);
+            setInitialized(true);
+          })
+          .catch(() => {
+            setInitialized(true);
           });
+      } else {
+        setUser(null);
+        setRole(null);
+        setInitialized(true);
       }
     });
 
@@ -50,23 +81,38 @@ function App() {
 
   return (
     <Router>
-      <div className="min-h-screen bg-[#0F172A] flex">
-        {session && <Sidebar />}
-        
-        <main className="flex-1 overflow-auto">
-          <Routes>
-            <Route path="/login" element={!session ? <Login /> : <Navigate to="/" />} />
-            <Route 
-              path="/" 
-              element={session ? <AdminDashboard /> : <Navigate to="/login" />} 
-            />
-            <Route path="/orders" element={session ? <OrderLog /> : <Navigate to="/login" />} />
-            <Route path="/fleet" element={session ? <FleetMap /> : <Navigate to="/login" />} />
-            <Route path="/settings" element={session ? <Settings /> : <Navigate to="/login" />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </main>
-      </div>
+      <Suspense fallback={<AdminLoading />}>
+        <Routes>
+          {/* Public Marketing Landing Route */}
+          <Route path="/" element={<Landing />} />
+
+          {/* Public Privacy Policy Route */}
+          <Route path="/privacy" element={<Privacy />} />
+
+          {/* Admin Login Route */}
+          <Route 
+            path="/admin/login" 
+            element={!session ? <Login /> : <Navigate to="/admin/dashboard" />} 
+          />
+
+          {/* Gated Protected Admin Routes */}
+          <Route path="/admin" element={<AdminRoute />}>
+            <Route element={<AdminLayout />}>
+              <Route path="dashboard" element={<AdminDashboard />} />
+              <Route path="orders" element={<OrderLog />} />
+              <Route path="fleet" element={<FleetMap />} />
+              <Route path="users" element={<UserManagement />} />
+              <Route path="settings" element={<Settings />} />
+              {/* Redirect /admin/ or /admin to dashboard */}
+              <Route path="" element={<Navigate to="dashboard" replace />} />
+            </Route>
+            <Route path="unauthorized" element={<Unauthorized />} />
+          </Route>
+
+          {/* Global Fallback to Public Landing Page */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </Router>
   );
 }

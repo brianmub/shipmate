@@ -2,7 +2,7 @@
   "expo": {
     "name": "ShipMateApp",
     "slug": "ShipMateApp",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -27,6 +27,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d05658ad-3803-461a-b498-6b699e71c475"
+      }
     }
   }
 }

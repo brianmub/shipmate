@@ -105,6 +105,19 @@ export const userService = {
     },
 
     /**
+     * Fetch platform-wide app settings toggles
+     */
+    async getAppSettings() {
+        const { data, error } = await supabase
+            .from('app_settings')
+            .select('*');
+
+        if (error) throw error;
+        return data;
+    },
+
+
+    /**
      * Submit driver payout request, validate balance, deduct balance and log transaction
      */
     async requestPayout(driverId: string, amount: number) {
