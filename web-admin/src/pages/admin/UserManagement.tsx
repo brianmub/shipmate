@@ -17,7 +17,6 @@ import {
   AlertCircle,
   Cpu
 } from 'lucide-react';
-} from 'lucide-react';
 
 interface UserProfile {
   id: string;
