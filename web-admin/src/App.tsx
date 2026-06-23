@@ -13,6 +13,7 @@ const FleetMap = lazy(() => import('./pages/FleetMap').then(m => ({ default: m.F
 const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 const UserManagement = lazy(() => import('./pages/admin/UserManagement').then(m => ({ default: m.UserManagement })));
 const Privacy = lazy(() => import('./pages/Privacy').then(m => ({ default: m.Privacy })));
+const DeleteAccount = lazy(() => import('./pages/DeleteAccount').then(m => ({ default: m.DeleteAccount })));
 const Unauthorized = lazy(() => import('./pages/admin/Unauthorized').then(m => ({ default: m.Unauthorized })));
 const AdminRoute = lazy(() => import('./routes/AdminRoute').then(m => ({ default: m.AdminRoute })));
 const AdminLayout = lazy(() => import('./components/AdminLayout').then(m => ({ default: m.AdminLayout })));
@@ -88,6 +89,9 @@ function App() {
 
           {/* Public Privacy Policy Route */}
           <Route path="/privacy" element={<Privacy />} />
+
+          {/* Public Delete Account Route */}
+          <Route path="/delete-account" element={<DeleteAccount />} />
 
           {/* Admin Login Route */}
           <Route 

@@ -172,6 +172,11 @@ export const Privacy = () => {
                 </Link>
               </li>
               <li>
+                <Link to="/delete-account" className="hover:text-white transition-colors font-bold text-rose-400">
+                  Delete Account
+                </Link>
+              </li>
+              <li>
                 <span className="text-white/40">Terms of Service</span>
               </li>
             </ul>
