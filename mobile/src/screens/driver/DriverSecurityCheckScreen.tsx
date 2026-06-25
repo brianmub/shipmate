@@ -16,10 +16,6 @@ export const DriverSecurityCheckScreen = ({ navigation }: any) => {
     const cameraRef = useRef<any>(null);
     const isFocused = useIsFocused();
 
-    if (!isFocused) {
-        return <View style={styles.centerContainer}><ActivityIndicator size="large" color="#055FEE" /></View>;
-    }
-
     if (!permission) {
         // Camera permissions are still loading.
         return <View style={styles.centerContainer}><ActivityIndicator size="large" color="#055FEE" /></View>;
@@ -82,7 +78,7 @@ export const DriverSecurityCheckScreen = ({ navigation }: any) => {
         <View style={styles.container}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
             
-            <CameraView style={styles.camera} facing="front">
+            <CameraView style={styles.camera} facing="front" active={isFocused}>
                 <View style={styles.overlay}>
                     <View style={styles.header}>
                         <Text style={styles.title}>Identity Check</Text>
