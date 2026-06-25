@@ -17,6 +17,7 @@ export const DriverJobsScreen = ({ navigation }: any) => {
     const [offerModalVisible, setOfferModalVisible] = useState(false);
     const [acceptingId, setAcceptingId] = useState<string | null>(null);
     const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+    const [declinedJobIds, setDeclinedJobIds] = useState<string[]>([]);
     const activeChannelRef = useRef<any>(null);
 
     useEffect(() => {
@@ -77,6 +78,40 @@ export const DriverJobsScreen = ({ navigation }: any) => {
             console.error('Error fetching jobs:', error.message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleDeclineJob = (jobId: string) => {
+        setDeclinedJobIds(prev => [...prev, jobId]);
+    };
+
+    const handleAcceptDirectly = async (job: any) => {
+        try {
+            setAcceptingId(job.id);
+            // Assign the driver directly to this order
+            const { data, error } = await supabase
+                .from('orders')
+                .update({
+                    status: 'driver_assigned',
+                    driver_id: user?.id,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', job.id)
+                .select()
+                .single();
+
+            if (error) throw error;
+
+            Alert.alert(
+                "Job Accepted",
+                "You have accepted this job! Please proceed to the pickup location.",
+                [{ text: "Go to Active Job", onPress: () => navigation.navigate('ActiveJob') }]
+            );
+            fetchPendingJobs();
+        } catch (error: any) {
+            Alert.alert("Error", error.message);
+        } finally {
+            setAcceptingId(null);
         }
     };
 
@@ -197,31 +232,48 @@ export const DriverJobsScreen = ({ navigation }: any) => {
                 </TouchableOpacity>
 
                 <View style={[styles.actionRow, isExpanded ? { marginTop: 16 } : null]}>
-                    <TouchableOpacity style={styles.rejectButton}>
+                    <TouchableOpacity 
+                        style={styles.rejectButton}
+                        onPress={() => handleDeclineJob(item.id)}
+                    >
                         <Text style={styles.rejectText}>Decline</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                        style={styles.acceptButtonContainer}
-                        activeOpacity={0.8}
+                        style={styles.bidButton}
                         onPress={() => {
                             setSelectedJob(item);
                             setOfferModalVisible(true);
                         }}
                     >
+                        <Text style={styles.bidButtonText}>Place Bid</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.acceptButtonContainer}
+                        activeOpacity={0.8}
+                        onPress={() => handleAcceptDirectly(item)}
+                        disabled={acceptingId === item.id}
+                    >
                         <LinearGradient
-                            colors={['#055FEE', '#5B99F2']}
+                            colors={['#10B981', '#34D399']}
                             style={styles.acceptGradient}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 0 }}
                         >
-                            <Text style={styles.acceptText}>Place Bid</Text>
+                            {acceptingId === item.id ? (
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                                <Text style={styles.acceptText}>Accept</Text>
+                            )}
                         </LinearGradient>
                     </TouchableOpacity>
                 </View>
             </BlurView>
         );
     };
+
+    const visibleJobs = jobs.filter(job => !declinedJobIds.includes(job.id));
 
     return (
         <LinearGradient
@@ -269,7 +321,7 @@ export const DriverJobsScreen = ({ navigation }: any) => {
                     <View style={styles.centerContainer}>
                         <ActivityIndicator size="large" color="#055FEE" />
                     </View>
-                ) : jobs.length === 0 ? (
+                ) : visibleJobs.length === 0 ? (
                     <View style={styles.centerContainer}>
                         <View style={styles.emptyIconCircle}>
                             <Text style={{ fontSize: 32 }}>🔍</Text>
@@ -279,7 +331,7 @@ export const DriverJobsScreen = ({ navigation }: any) => {
                     </View>
                 ) : (
                     <FlatList
-                        data={jobs}
+                        data={visibleJobs}
                         keyExtractor={(item) => item.id}
                         renderItem={renderJobCard}
                         contentContainerStyle={styles.listContainer}
@@ -484,14 +536,28 @@ const styles = StyleSheet.create({
         fontSize: 15,
     },
     acceptButtonContainer: {
-        flex: 2,
+        flex: 1.5,
         borderRadius: 14,
         overflow: 'hidden',
-        shadowColor: '#055FEE',
+        shadowColor: '#10B981',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,
         elevation: 6,
+    },
+    bidButton: {
+        flex: 1.5,
+        paddingVertical: 14,
+        borderRadius: 14,
+        backgroundColor: 'rgba(5, 95, 238, 0.08)',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(5, 95, 238, 0.15)',
+    },
+    bidButtonText: {
+        color: '#055FEE',
+        fontWeight: '700',
+        fontSize: 15,
     },
     acceptGradient: {
         paddingVertical: 14,

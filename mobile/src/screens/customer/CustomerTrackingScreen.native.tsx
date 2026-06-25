@@ -5,12 +5,16 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../../utils/supabase';
+import { OfferSelectionPanel } from '../../components/OfferSelectionPanel';
+import { orderService } from '../../services/orderService';
 
 export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     const { orderId } = route.params;
     const [order, setOrder] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [viewingCouriers, setViewingCouriers] = useState<any[]>([]);
+    const [offers, setOffers] = useState<any[]>([]);
+    const [offersLoading, setOffersLoading] = useState(false);
     const mapRef = useRef<MapView>(null);
 
     const fetchOrder = async () => {
@@ -33,13 +37,46 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
         }
     };
 
+    const fetchOffers = async () => {
+        setOffersLoading(true);
+        try {
+            const data = await orderService.getOrderOffers(orderId);
+            setOffers(data || []);
+        } catch (error: any) {
+            console.error('Error fetching offers:', error.message);
+        } finally {
+            setOffersLoading(false);
+        }
+    };
+
+    const handleAcceptOffer = async (offer: any) => {
+        try {
+            setLoading(true);
+            await orderService.acceptOffer(orderId, offer.id, offer.driver_id);
+            Alert.alert("Success", "Courier hired successfully! They are on their way.");
+            fetchOrder();
+        } catch (error: any) {
+            Alert.alert("Error", error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     useEffect(() => {
         fetchOrder();
+        fetchOffers();
 
         const channel = supabase
             .channel(`public:tracking_${orderId}`)
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` }, (payload) => {
                 setOrder((prev: any) => ({ ...prev, ...payload.new }));
+            })
+            .subscribe();
+
+        const offersChannel = supabase
+            .channel(`public:offers_${orderId}`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers', filter: `order_id=eq.${orderId}` }, (payload) => {
+                fetchOffers();
             })
             .subscribe();
 
@@ -65,6 +102,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
 
         return () => {
             supabase.removeChannel(channel);
+            supabase.removeChannel(offersChannel);
             supabase.removeChannel(presenceChannel);
         };
     }, [orderId]);
@@ -157,6 +195,24 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                             </View>
                         </Marker>
                     )}
+
+                    {/* Render Driver Bid/Offer Locations on the map */}
+                    {order.status === 'pending' && offers.map((offer) => (
+                        offer.driver_latitude && offer.driver_longitude && (
+                            <Marker
+                                key={offer.id}
+                                coordinate={{ latitude: offer.driver_latitude, longitude: offer.driver_longitude }}
+                                title={offer.driver?.full_name}
+                                description={`Offer: $${offer.offer_amount.toFixed(2)}`}
+                            >
+                                <View style={styles.driverMarkerOuter}>
+                                    <View style={[styles.driverMarkerInner, { backgroundColor: '#F59E0B' }]}>
+                                        <Text style={{ fontSize: 16 }}>🚗</Text>
+                                    </View>
+                                </View>
+                            </Marker>
+                        )
+                    ))}
                 </MapView>
             </View>
 
@@ -194,38 +250,56 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                         </View>
 
                         {order.status === 'pending' ? (
-                            <View style={styles.viewersCard}>
-                                <View style={styles.viewersHeader}>
-                                    <ActivityIndicator size="small" color="#F59E0B" style={{ marginRight: 8 }} />
-                                    <Text style={styles.viewersTitle}>Searching for Couriers...</Text>
-                                </View>
-                                <Text style={styles.viewersSubtitle}>
-                                    We are finding nearby drivers for your {isDelivery ? 'delivery' : 'errand'}.
-                                </Text>
-                                <View style={styles.viewersSeparator} />
-                                {viewingCouriers.length > 0 ? (
-                                    <View>
-                                        <Text style={styles.viewingCountText}>
-                                            👀 {viewingCouriers.length} courier{viewingCouriers.length > 1 ? 's' : ''} currently viewing your offer:
-                                        </Text>
-                                        {viewingCouriers.map((courier) => (
-                                            <View key={courier.id} style={styles.courierRow}>
-                                                <View style={styles.courierAvatarSmall}>
-                                                    <Text style={styles.courierAvatarSmallText}>
-                                                        {courier.full_name?.charAt(0).toUpperCase() || 'C'}
+                            <View>
+                                <View style={styles.viewersCard}>
+                                    <View style={styles.viewersHeader}>
+                                        <ActivityIndicator size="small" color="#F59E0B" style={{ marginRight: 8 }} />
+                                        <Text style={styles.viewersTitle}>Searching for Couriers...</Text>
+                                    </View>
+                                    <Text style={styles.viewersSubtitle}>
+                                        We are finding nearby drivers for your {isDelivery ? 'delivery' : 'errand'}.
+                                    </Text>
+                                    <View style={styles.viewersSeparator} />
+                                    {viewingCouriers.length > 0 ? (
+                                        <View>
+                                            <Text style={styles.viewingCountText}>
+                                                👀 {viewingCouriers.length} courier{viewingCouriers.length > 1 ? 's' : ''} currently viewing your offer:
+                                            </Text>
+                                            {viewingCouriers.map((courier) => (
+                                                <View key={courier.id} style={styles.courierRow}>
+                                                    <View style={styles.courierAvatarSmall}>
+                                                        <Text style={styles.courierAvatarSmallText}>
+                                                            {courier.full_name?.charAt(0).toUpperCase() || 'C'}
+                                                        </Text>
+                                                    </View>
+                                                    <Text style={styles.courierNameText}>
+                                                        {courier.full_name} is reviewing details
                                                     </Text>
                                                 </View>
-                                                <Text style={styles.courierNameText}>
-                                                    {courier.full_name} is reviewing details
-                                                </Text>
-                                            </View>
-                                        ))}
-                                    </View>
-                                ) : (
-                                    <Text style={styles.waitingText}>
-                                        🔍 Waiting for couriers to inspect details...
-                                    </Text>
-                                )}
+                                            ))}
+                                        </View>
+                                    ) : (
+                                        <Text style={styles.waitingText}>
+                                            🔍 Waiting for couriers to inspect details...
+                                        </Text>
+                                    )}
+                                </View>
+
+                                <OfferSelectionPanel 
+                                    offers={offers}
+                                    onAccept={handleAcceptOffer}
+                                    onSelect={(offer) => {
+                                        if (offer.driver_latitude && offer.driver_longitude && mapRef.current) {
+                                            mapRef.current.animateToRegion({
+                                                latitude: offer.driver_latitude,
+                                                longitude: offer.driver_longitude,
+                                                latitudeDelta: 0.02,
+                                                longitudeDelta: 0.02,
+                                            }, 1000);
+                                        }
+                                    }}
+                                    loading={offersLoading}
+                                />
                             </View>
                         ) : (
                             <View style={styles.driverInfoCard}>

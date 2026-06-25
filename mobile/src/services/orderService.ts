@@ -42,10 +42,12 @@ export const orderService = {
      * Fetch all available jobs for drivers (where status is pending)
      */
     async getAvailableJobs() {
+        const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
         const { data, error } = await supabase
             .from('orders')
             .select('*')
             .eq('status', 'pending')
+            .gt('created_at', twelveHoursAgo)
             .order('created_at', { ascending: false });
 
         if (error) throw error;
