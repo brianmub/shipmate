@@ -55,7 +55,7 @@ export const DriverSecurityCheckScreen = ({ navigation }: any) => {
                     Alert.alert(
                         "Identity Verified",
                         "Security check passed. You are now authorized for today's deliveries.",
-                        [{ text: "Continue", onPress: () => navigation.replace('DriverHome') }]
+                        [{ text: "Continue", onPress: () => navigation.navigate('Dashboard') }]
                     );
                 }, 1000);
             } catch (error: any) {
