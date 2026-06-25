@@ -425,23 +425,28 @@ const styles = StyleSheet.create({
         color: '#1E293B',
     },
     contactBtn: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        backgroundColor: 'rgba(5, 95, 238, 0.1)',
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        backgroundColor: '#055FEE', // Solid primary blue for calling
         justifyContent: 'center',
         alignItems: 'center',
+        shadowColor: '#055FEE',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 6,
+        elevation: 4,
     },
     communicationButtons: {
         flexDirection: 'row',
-        gap: 8,
+        gap: 12,
     },
     chatBtn: {
-        backgroundColor: 'rgba(34, 197, 94, 0.1)',
-        borderColor: 'rgba(34, 197, 94, 0.15)',
+        backgroundColor: '#22C55E', // Solid green for chat
+        shadowColor: '#22C55E',
     },
     contactIcon: {
-        fontSize: 20,
+        fontSize: 22,
     },
 
     viewersCard: {
