@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Camera, CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import { useIsFocused } from '@react-navigation/native';
 import { supabase } from '../../utils/supabase';
 import { useAuthStore } from '../../store/authStore';
 
@@ -13,6 +14,11 @@ export const DriverSecurityCheckScreen = ({ navigation }: any) => {
     const [isVerifying, setIsVerifying] = useState(false);
     const [status, setStatus] = useState<'idle' | 'scanning' | 'success'>('idle');
     const cameraRef = useRef<any>(null);
+    const isFocused = useIsFocused();
+
+    if (!isFocused) {
+        return <View style={styles.centerContainer}><ActivityIndicator size="large" color="#055FEE" /></View>;
+    }
 
     if (!permission) {
         // Camera permissions are still loading.
@@ -40,15 +46,20 @@ export const DriverSecurityCheckScreen = ({ navigation }: any) => {
         setTimeout(async () => {
             try {
                 // 2. Update the driver's verification status in the database
-                const { error } = await supabase
+                const { data, error } = await supabase
                     .from('drivers')
                     .update({
                         is_identity_verified: true,
                         last_verification_at: new Date().toISOString()
                     })
-                    .eq('id', user?.id);
+                    .eq('id', user?.id)
+                    .select();
 
                 if (error) throw error;
+
+                if (!data || data.length === 0) {
+                    throw new Error("Unable to update verification status in the database. This usually happens if Row Level Security (RLS) policies are active but missing update permissions for couriers.");
+                }
 
                 setStatus('success');
                 setTimeout(() => {

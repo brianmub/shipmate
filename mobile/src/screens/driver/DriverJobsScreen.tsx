@@ -81,10 +81,14 @@ export const DriverJobsScreen = ({ navigation }: any) => {
     };
 
     useEffect(() => {
-        // Check verification first
+        // Refresh when focused
+        const unsubscribe = navigation.addListener('focus', () => {
+            checkVerificationStatus();
+            fetchPendingJobs();
+        });
+
+        // Run initially
         checkVerificationStatus();
-        
-        // Fetch initially
         fetchPendingJobs();
 
         // Optional: Subscribe to new orders here if realtime is enabled
@@ -96,9 +100,10 @@ export const DriverJobsScreen = ({ navigation }: any) => {
             .subscribe();
 
         return () => {
+            unsubscribe();
             supabase.removeChannel(channel);
         };
-    }, []);
+    }, [navigation]);
 
 
 
