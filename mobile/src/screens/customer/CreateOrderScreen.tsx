@@ -31,6 +31,18 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
     // Pricing States
     const [estimatedCost, setEstimatedCost] = useState(12.50);
     const [pricingSettings, setPricingSettings] = useState<{ base_delivery_fee: number; per_km_rate: number } | null>(null);
+    const [bidPrice, setBidPrice] = useState<string>('12.50');
+
+    // Sync custom bid with estimated cost updates
+    useEffect(() => {
+        setBidPrice(estimatedCost.toFixed(2));
+    }, [estimatedCost]);
+
+    const adjustBid = (amount: number) => {
+        const current = parseFloat(bidPrice) || estimatedCost;
+        const next = Math.max(0.50, current + amount);
+        setBidPrice(next.toFixed(2));
+    };
 
     // Fetch settings on load
     useEffect(() => {
@@ -153,7 +165,6 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
         const result = await ImagePicker.launchCameraAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsEditing: true,
-            aspect: [4, 3],
             quality: 0.5,
             base64: true,
         });
@@ -205,6 +216,12 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
             return;
         }
 
+        const offerAmount = parseFloat(bidPrice);
+        if (isNaN(offerAmount) || offerAmount <= 0) {
+            Alert.alert('Invalid Offer Price', 'Please enter a valid offer price before placing the order.');
+            return;
+        }
+
         setLoading(true);
         setShowErrors(false);
         try {
@@ -225,11 +242,12 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                 package_description: isDelivery ? packageDescription : null,
                 package_image_url: packageImage,
                 ai_size_estimate: aiEstimate,
-                estimated_cost: estimatedCost
+                estimated_cost: offerAmount
             });
 
             resetOrder();
             setEstimatedCost(pricingSettings?.base_delivery_fee ?? 5.00);
+            setBidPrice((pricingSettings?.base_delivery_fee ?? 5.00).toFixed(2));
             
             Alert.alert(
                 "Order Confirmed", 
@@ -444,6 +462,40 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                 <Text style={styles.summaryLabel}>Estimated Cost:</Text>
                                 <Text style={styles.summaryTitle}>${estimatedCost.toFixed(2)}</Text>
                             </View>
+
+                            <View style={styles.bidSection}>
+                                <View style={styles.bidHeaderRow}>
+                                    <Text style={styles.bidLabel}>Your Offer Price ($):</Text>
+                                    <Text style={styles.bidHint}>Adjust to match your budget</Text>
+                                </View>
+                                <View style={styles.bidContainer}>
+                                    <TouchableOpacity 
+                                        style={styles.bidAdjustButton}
+                                        onPress={() => adjustBid(-1.00)}
+                                    >
+                                        <Text style={styles.bidAdjustButtonText}>-</Text>
+                                    </TouchableOpacity>
+                                    
+                                    <TextInput
+                                        style={styles.bidInput}
+                                        value={bidPrice}
+                                        onChangeText={setBidPrice}
+                                        keyboardType="decimal-pad"
+                                        placeholder={estimatedCost.toFixed(2)}
+                                        selectionColor="#055FEE"
+                                    />
+                                    
+                                    <TouchableOpacity 
+                                        style={styles.bidAdjustButton}
+                                        onPress={() => adjustBid(1.00)}
+                                    >
+                                        <Text style={styles.bidAdjustButtonText}>+</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+
+                            <View style={styles.bidDivider} />
+
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Payment Method:</Text>
                                 <Text style={styles.summaryText}>Cash on Delivery</Text>
@@ -768,5 +820,71 @@ const styles = StyleSheet.create({
         color: '#055FEE',
         fontSize: 13,
         fontWeight: '600',
+    },
+    bidSection: {
+        marginTop: 16,
+        paddingTop: 16,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(0,0,0,0.05)',
+    },
+    bidHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    bidLabel: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#475569',
+    },
+    bidHint: {
+        fontSize: 11,
+        color: '#94A3B8',
+        fontWeight: '600',
+    },
+    bidContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: '#F8FAFC',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.05)',
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+    },
+    bidAdjustButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        backgroundColor: '#FFFFFF',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.05)',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    bidAdjustButtonText: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#055FEE',
+    },
+    bidInput: {
+        flex: 1,
+        textAlign: 'center',
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#055FEE',
+        paddingVertical: 8,
+    },
+    bidDivider: {
+        height: 1,
+        backgroundColor: 'rgba(0,0,0,0.05)',
+        marginVertical: 16,
     },
 });

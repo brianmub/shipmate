@@ -19,12 +19,10 @@ export const verificationService = {
         const result = useCamera
             ? await ImagePicker.launchCameraAsync({
                 allowsEditing: true,
-                aspect: [4, 3],
                 quality: 0.7,
             })
             : await ImagePicker.launchImageLibraryAsync({
                 allowsEditing: true,
-                aspect: [4, 3],
                 quality: 0.7,
             });
 

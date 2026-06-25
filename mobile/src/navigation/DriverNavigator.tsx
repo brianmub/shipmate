@@ -10,6 +10,7 @@ import { DriverOnboardingScreen } from '../screens/driver/DriverOnboardingScreen
 import { DriverActiveJobScreen } from '../screens/driver/DriverActiveJobScreen';
 import { EarningsScreen } from '../screens/driver/EarningsScreen';
 import { DriverSecurityCheckScreen } from '../screens/driver/DriverSecurityCheckScreen';
+import { ChatScreen } from '../screens/ChatScreen';
 
 import { useAuthStore } from '../store/authStore';
 import { OnboardingNavigator } from './OnboardingNavigator';
@@ -62,6 +63,14 @@ export const DriverNavigator = () => {
                 component={DriverSecurityCheckScreen}
                 options={{ 
                     title: 'Security Verification',
+                    drawerItemStyle: { display: 'none' } // Hide from drawer menu
+                }}
+            />
+            <Drawer.Screen
+                name="Chat"
+                component={ChatScreen}
+                options={{ 
+                    title: 'Chat',
                     drawerItemStyle: { display: 'none' } // Hide from drawer menu
                 }}
             />

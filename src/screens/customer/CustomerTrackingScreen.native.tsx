@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, StatusBar, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, StatusBar, Platform, Linking, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
@@ -19,7 +19,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                 .from('orders')
                 .select(`
                     *,
-                    driver:driver_id(full_name)
+                    driver:driver_id(full_name, phone)
                 `)
                 .eq('id', orderId)
                 .single();
@@ -236,9 +236,30 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                     <Text style={styles.driverNameLabel}>Your Courier</Text>
                                     <Text style={styles.driverName}>{driverName}</Text>
                                 </View>
-                                <TouchableOpacity style={styles.contactBtn}>
-                                    <Text style={styles.contactIcon}>📞</Text>
-                                </TouchableOpacity>
+                                <View style={styles.communicationButtons}>
+                                    <TouchableOpacity 
+                                        style={styles.contactBtn}
+                                        onPress={() => {
+                                            if (order.driver?.phone) {
+                                                Linking.openURL(`tel:${order.driver.phone}`);
+                                            } else {
+                                                Alert.alert('Unavailable', 'Courier phone number is not available.');
+                                            }
+                                        }}
+                                    >
+                                        <Text style={styles.contactIcon}>📞</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={[styles.contactBtn, styles.chatBtn]}
+                                        onPress={() => navigation.navigate('Chat', { 
+                                            orderId: order.id, 
+                                            recipientName: driverName, 
+                                            recipientPhone: order.driver?.phone 
+                                        })}
+                                    >
+                                        <Text style={styles.contactIcon}>💬</Text>
+                                    </TouchableOpacity>
+                                </View>
                             </View>
                         )}
                     </SafeAreaView>
@@ -336,6 +357,14 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(5, 95, 238, 0.1)',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    communicationButtons: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    chatBtn: {
+        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+        borderColor: 'rgba(34, 197, 94, 0.15)',
     },
     contactIcon: {
         fontSize: 20,

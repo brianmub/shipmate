@@ -9,6 +9,7 @@ import { DriverProfileScreen } from '../screens/driver/DriverProfileScreen';
 import { DriverOnboardingScreen } from '../screens/driver/DriverOnboardingScreen';
 import { DriverActiveJobScreen } from '../screens/driver/DriverActiveJobScreen';
 import { EarningsScreen } from '../screens/driver/EarningsScreen';
+import { ChatScreen } from '../screens/ChatScreen';
 
 import { useAuthStore } from '../store/authStore';
 import { OnboardingNavigator } from './OnboardingNavigator';
@@ -55,6 +56,14 @@ export const DriverNavigator = () => {
                 name="Profile"
                 component={DriverProfileScreen}
                 options={{ title: 'My Profile' }}
+            />
+            <Drawer.Screen
+                name="Chat"
+                component={ChatScreen}
+                options={{ 
+                    title: 'Chat',
+                    drawerItemStyle: { display: 'none' } // Hide from drawer menu
+                }}
             />
         </Drawer.Navigator>
     );

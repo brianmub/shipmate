@@ -10,6 +10,7 @@ import { CreateOrderScreen } from '../screens/customer/CreateOrderScreen';
 
 import { MapLocationPickerScreen } from '../screens/customer/MapLocationPickerScreen';
 import { CustomerTrackingScreen } from '../screens/customer/CustomerTrackingScreen';
+import { ChatScreen } from '../screens/ChatScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -46,6 +47,11 @@ export const CustomerNavigator = () => {
                 name="CustomerTracking"
                 component={CustomerTrackingScreen}
                 options={{ headerShown: false }}
+            />
+            <Stack.Screen
+                name="Chat"
+                component={ChatScreen}
+                options={{ title: 'Chat' }}
             />
         </Stack.Navigator>
     );

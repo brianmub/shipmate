@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "ShipMateApp",
+    "name": "Shipmate",
     "slug": "shipmate",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,6 +16,12 @@
     },
     "android": {
       "package": "com.shipmate.shipmate",
+      "versionCode": 11,
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyPlaceholderGoogleMapsKeyForAndroid"
+        }
+      },
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

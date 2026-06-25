@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, StatusBar, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, StatusBar, Platform, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
@@ -302,6 +302,43 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                             <Text style={styles.statusValue}>{activeJob.status.replace(/_/g, ' ').toUpperCase()}</Text>
                         </View>
 
+                        {/* Customer Info Card */}
+                        <View style={styles.customerInfoCard}>
+                            <View style={styles.customerAvatar}>
+                                <Text style={styles.customerAvatarText}>
+                                    {activeJob.customer?.full_name?.charAt(0).toUpperCase() || 'C'}
+                                </Text>
+                            </View>
+                            <View style={styles.customerDetails}>
+                                <Text style={styles.customerNameLabel}>Customer</Text>
+                                <Text style={styles.customerName}>{activeJob.customer?.full_name || 'Customer'}</Text>
+                            </View>
+                            <View style={styles.communicationButtons}>
+                                <TouchableOpacity 
+                                    style={styles.contactBtn}
+                                    onPress={() => {
+                                        if (activeJob.customer?.phone) {
+                                            Linking.openURL(`tel:${activeJob.customer.phone}`);
+                                        } else {
+                                            Alert.alert('Unavailable', 'Customer phone number is not available.');
+                                        }
+                                    }}
+                                >
+                                    <Text style={styles.contactIcon}>📞</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity 
+                                    style={[styles.contactBtn, styles.chatBtn]}
+                                    onPress={() => navigation.navigate('Chat', { 
+                                        orderId: activeJob.id, 
+                                        recipientName: activeJob.customer?.full_name || 'Customer', 
+                                        recipientPhone: activeJob.customer?.phone 
+                                    })}
+                                >
+                                    <Text style={styles.contactIcon}>💬</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+
                         <TouchableOpacity
                             style={styles.completeButtonContainer}
                             activeOpacity={0.8}
@@ -492,4 +529,60 @@ const styles = StyleSheet.create({
     },
     statusLabel: { fontSize: 14, color: '#475569', fontWeight: '600' },
     statusValue: { fontSize: 14, color: '#055FEE', fontWeight: '800' },
+    customerInfoCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.7)',
+        padding: 16,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.5)',
+        marginBottom: 20,
+    },
+    customerAvatar: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: '#0F172A',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 16,
+    },
+    customerAvatarText: {
+        color: '#FFFFFF',
+        fontSize: 20,
+        fontWeight: 'bold',
+    },
+    customerDetails: {
+        flex: 1,
+    },
+    customerNameLabel: {
+        fontSize: 12,
+        color: '#64748B',
+        fontWeight: '500',
+    },
+    customerName: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#1E293B',
+    },
+    communicationButtons: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    contactBtn: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: 'rgba(5, 95, 238, 0.1)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    chatBtn: {
+        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+        borderColor: 'rgba(34, 197, 94, 0.15)',
+    },
+    contactIcon: {
+        fontSize: 20,
+    },
 });

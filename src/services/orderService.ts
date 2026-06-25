@@ -36,7 +36,7 @@ export const orderService = {
     async getActiveDriverJob(driverId: string) {
         const { data, error } = await supabase
             .from('orders')
-            .select('*')
+            .select('*, customer:customer_id(full_name, phone)')
             .eq('driver_id', driverId)
             .in('status', [
                 'driver_assigned', 

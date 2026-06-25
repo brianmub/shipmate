@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "ShipMateApp",
-    "slug": "ShipMateApp",
-    "version": "2.0.0",
+    "name": "Shipmate",
+    "slug": "shipmate",
+    "version": "2.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,6 +16,12 @@
     },
     "android": {
       "package": "com.shipmate.shipmate",
+      "versionCode": 12,
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyPlaceholderGoogleMapsKeyForAndroid"
+        }
+      },
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -30,8 +36,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "d05658ad-3803-461a-b498-6b699e71c475"
+        "projectId": "ffd47272-3882-40d0-b2d3-9bbfb92e769b"
       }
-    }
+    },
+    "owner": "shipmate.co.zw"
   }
 }

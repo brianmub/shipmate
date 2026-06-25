@@ -10,6 +10,7 @@
     "test:full": "ts-node src/scripts/test_everything.ts"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/bottom-tabs": "^7.15.5",
     "@react-navigation/drawer": "^7.9.4",
     "@react-navigation/native": "^7.1.33",
