@@ -11,6 +11,8 @@ export const DriverJobsScreen = ({ navigation }: any) => {
     const { user } = useAuthStore();
     const [jobs, setJobs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [walletStatus, setWalletStatus] = useState<string>('active');
+    const [walletBalance, setWalletBalance] = useState<number | null>(null);
     const [acceptingId, setAcceptingId] = useState<string | null>(null);
     const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
     const activeChannelRef = useRef<any>(null);
@@ -44,6 +46,18 @@ export const DriverJobsScreen = ({ navigation }: any) => {
         };
     }, [expandedJobId, user]);
 
+    const checkWalletStatus = async () => {
+        try {
+            const walletData = await userService.getCourierWallet(user?.id);
+            if (walletData) {
+                setWalletStatus(walletData.status);
+                setWalletBalance(walletData.balance);
+            }
+        } catch (error) {
+            console.error('Error checking wallet status:', error);
+        }
+    };
+
     const fetchPendingJobs = async () => {
         try {
             setLoading(true);
@@ -57,7 +71,14 @@ export const DriverJobsScreen = ({ navigation }: any) => {
     };
 
     useEffect(() => {
+        // Refresh when focused
+        const unsubscribe = navigation.addListener('focus', () => {
+            checkWalletStatus();
+            fetchPendingJobs();
+        });
+
         // Fetch initially
+        checkWalletStatus();
         fetchPendingJobs();
 
         // Optional: Subscribe to new orders here if realtime is enabled
@@ -69,9 +90,10 @@ export const DriverJobsScreen = ({ navigation }: any) => {
             .subscribe();
 
         return () => {
+            unsubscribe();
             supabase.removeChannel(channel);
         };
-    }, []);
+    }, [navigation]);
 
     const handleAcceptJob = async (jobId: string) => {
         if (!user) return;
@@ -234,7 +256,30 @@ export const DriverJobsScreen = ({ navigation }: any) => {
                     </TouchableOpacity>
                 </View>
 
-                {loading ? (
+                {walletStatus === 'locked' ? (
+                    <View style={styles.centerContainer}>
+                        <BlurView intensity={20} tint="light" style={styles.securityCard}>
+                            <View style={styles.securityIconCircle}>
+                                <Text style={{ fontSize: 32 }}>🔒</Text>
+                            </View>
+                            <Text style={styles.securityTitle}>Wallet Locked Out</Text>
+                            <Text style={styles.securityText}>
+                                Your float balance is below $0.25 (${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}). Please top up your wallet to resume accepting new delivery jobs.
+                            </Text>
+                            <TouchableOpacity 
+                                style={styles.verifyBtnContainer}
+                                onPress={() => navigation.navigate('Wallet')}
+                            >
+                                <LinearGradient
+                                    colors={['#055FEE', '#5B99F2']}
+                                    style={styles.verifyBtn}
+                                >
+                                    <Text style={styles.verifyBtnText}>Go to Wallet</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </BlurView>
+                    </View>
+                ) : loading ? (
                     <View style={styles.centerContainer}>
                         <ActivityIndicator size="large" color="#055FEE" />
                     </View>
@@ -517,5 +562,52 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
         color: '#5B99F2',
+    },
+    securityCard: {
+        borderRadius: 32,
+        padding: 32,
+        width: '100%',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(5, 95, 238, 0.2)',
+        backgroundColor: 'rgba(255,255,255,0.4)',
+        overflow: 'hidden',
+    },
+    securityIconCircle: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: 'rgba(5, 95, 238, 0.1)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    securityTitle: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#0F172A',
+        textAlign: 'center',
+        marginBottom: 12,
+    },
+    securityText: {
+        fontSize: 15,
+        color: '#64748B',
+        textAlign: 'center',
+        lineHeight: 22,
+        marginBottom: 24,
+    },
+    verifyBtnContainer: {
+        width: '100%',
+        borderRadius: 16,
+        overflow: 'hidden',
+    },
+    verifyBtn: {
+        paddingVertical: 16,
+        alignItems: 'center',
+    },
+    verifyBtnText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: 'bold',
     },
 });

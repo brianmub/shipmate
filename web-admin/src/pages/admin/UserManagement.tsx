@@ -34,6 +34,10 @@ interface UserProfile {
     total_deliveries: number;
     average_rating: number;
   } | null;
+  courier_wallets?: {
+    balance: number;
+    status: 'active' | 'locked';
+  } | null;
   customers?: {
     total_orders: number;
     lifetime_spend: number;
@@ -65,6 +69,16 @@ export const UserManagement = () => {
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   
+  // Ledger Modal State
+  const [showLedgerModal, setShowLedgerModal] = useState(false);
+  const [ledgerTransactions, setLedgerTransactions] = useState<any[]>([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+
+  // Admin Top-up Modal State
+  const [showTopUpModalAdmin, setShowTopUpModalAdmin] = useState(false);
+  const [adminTopUpAmount, setAdminTopUpAmount] = useState('10.00');
+  const [adminTopUpLoading, setAdminTopUpLoading] = useState(false);
+
   // Modals / Action States
   const [showAddModal, setShowAddModal] = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
@@ -103,6 +117,10 @@ export const UserManagement = () => {
             total_deliveries,
             average_rating
           ),
+          courier_wallets (
+            balance,
+            status
+          ),
           customers (
             total_orders,
             lifetime_spend
@@ -129,7 +147,10 @@ export const UserManagement = () => {
         ...u,
         driver_applications: Array.isArray(u.driver_applications) 
           ? u.driver_applications[0] 
-          : u.driver_applications
+          : u.driver_applications,
+        courier_wallets: Array.isArray(u.courier_wallets)
+          ? u.courier_wallets[0]
+          : u.courier_wallets
       }));
 
       setUsers(mapped);
@@ -137,6 +158,61 @@ export const UserManagement = () => {
       console.error('Error fetching users:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenLedgerModal = async (user: UserProfile) => {
+    setSelectedUser(user);
+    setShowLedgerModal(true);
+    setLedgerLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('wallet_transactions')
+        .select('*')
+        .eq('courier_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setLedgerTransactions(data || []);
+    } catch (err: any) {
+      alert(`Failed to load ledger: ${err.message}`);
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  const handleOpenTopUpModal = (user: UserProfile) => {
+    setSelectedUser(user);
+    setShowTopUpModalAdmin(true);
+    setAdminTopUpAmount('10.00');
+  };
+
+  const handleAdminTopUpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUser) return;
+    const amountNum = parseFloat(adminTopUpAmount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      alert('Please enter a valid positive amount.');
+      return;
+    }
+
+    setAdminTopUpLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('topup_wallet_rpc', {
+        p_courier_id: selectedUser.id,
+        p_gross_amount: amountNum,
+        p_net_amount: amountNum
+      });
+
+      if (error) throw error;
+
+      showToast(`Successfully credited $${amountNum.toFixed(2)} to ${selectedUser.full_name || selectedUser.email}'s wallet.`);
+      setShowTopUpModalAdmin(false);
+      fetchUsers(); // Refresh list to update display balances
+    } catch (err: any) {
+      alert(`Manual adjustment failed: ${err.message}`);
+    } finally {
+      setAdminTopUpLoading(false);
     }
   };
 
@@ -496,23 +572,39 @@ export const UserManagement = () => {
                       {/* Join stats/Balances */}
                       <td className="py-5 px-6 text-xs space-y-1">
                         {user.role === 'driver' && (
-                          <div className="space-y-0.5 font-medium text-slate-350">
+                          <div className="space-y-1 font-medium text-slate-350">
                             <p>Status: <span className="font-bold text-white uppercase tracking-wider text-[10px]">{user.drivers?.verification_status || 'Pending'}</span></p>
                             <p>Deliveries: <span className="font-bold text-white">{user.drivers?.total_deliveries || 0}</span></p>
-                            <p>Balance: <span className="font-extrabold text-[#F2A33D]">${user.drivers?.platform_balance || 0}</span></p>
+                            <p>Wallet Balance: <span className="font-extrabold text-emerald-400">${user.courier_wallets?.balance !== undefined ? user.courier_wallets.balance.toFixed(2) : '0.00'}</span></p>
+                            <p>Wallet Status: <span className={`font-bold ${user.courier_wallets?.status === 'locked' ? 'text-rose-450' : 'text-emerald-400'} uppercase tracking-wider text-[10px]`}>{user.courier_wallets?.status || 'Active'}</span></p>
                             <p>Rating: <span className="font-bold text-white">{user.drivers?.average_rating || 'N/A'} ⭐</span></p>
-                            {user.driver_applications && (
+                            
+                            <div className="flex flex-wrap gap-1.5 pt-2">
+                              {user.driver_applications && (
+                                <button
+                                  onClick={() => {
+                                    setSelectedUser(user);
+                                    setShowDetailsModal(true);
+                                  }}
+                                  className="flex items-center gap-1 text-[9px] font-extrabold text-emerald-400 hover:text-white transition-colors bg-emerald-500/10 border border-emerald-500/15 px-2 py-1 rounded-lg cursor-pointer"
+                                >
+                                  <Cpu className="w-3 h-3" />
+                                  AI Screen
+                                </button>
+                              )}
                               <button
-                                onClick={() => {
-                                  setSelectedUser(user);
-                                  setShowDetailsModal(true);
-                                }}
-                                className="mt-2.5 flex items-center gap-1.5 text-[10px] font-extrabold text-emerald-400 hover:text-white transition-colors bg-emerald-500/10 border border-emerald-500/15 px-2.5 py-1.5 rounded-xl cursor-pointer shadow-sm shadow-emerald-500/5"
+                                onClick={() => handleOpenLedgerModal(user)}
+                                className="flex items-center gap-1 text-[9px] font-extrabold text-brand-blue hover:text-white transition-colors bg-brand-blue/10 border border-brand-blue/15 px-2 py-1 rounded-lg cursor-pointer"
                               >
-                                <Cpu className="w-3.5 h-3.5" />
-                                View AI Screening
+                                Ledger
                               </button>
-                            )}
+                              <button
+                                onClick={() => handleOpenTopUpModal(user)}
+                                className="flex items-center gap-1 text-[9px] font-extrabold text-amber-400 hover:text-white transition-colors bg-amber-500/10 border border-amber-500/15 px-2 py-1 rounded-lg cursor-pointer"
+                              >
+                                Top Up
+                              </button>
+                            </div>
                           </div>
                         )}
 
@@ -887,6 +979,144 @@ export const UserManagement = () => {
                   <>
                     <span>Create User</span>
                   </>
+                )}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* LEDGER TRANSACTIONS MODAL */}
+      {showLedgerModal && selectedUser && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] shadow-2xl relative max-h-[85vh] flex flex-col">
+            <button
+              onClick={() => {
+                setShowLedgerModal(false);
+                setSelectedUser(null);
+                setLedgerTransactions([]);
+              }}
+              className="absolute top-6 right-6 p-2 text-slate-500 hover:text-white transition-colors cursor-pointer bg-slate-850 rounded-xl"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-6 pr-10 border-b border-slate-850 pb-5 shrink-0">
+              <div className="w-10 h-10 bg-brand-blue/10 text-brand-blue rounded-xl flex items-center justify-center">
+                <Cpu className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-white">Wallet Ledger History</h2>
+                <p className="text-xs text-slate-400 mt-1">Courier: <span className="font-bold text-slate-200">{selectedUser.full_name || 'No Name'}</span> ({selectedUser.email})</p>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto flex-1 pr-2">
+              {ledgerLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 text-brand-blue animate-spin" />
+                </div>
+              ) : ledgerTransactions.length === 0 ? (
+                <p className="text-center text-slate-500 font-semibold py-12">No transactions recorded for this wallet.</p>
+              ) : (
+                <div className="border border-slate-850 rounded-2xl overflow-hidden">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-850/50 border-b border-slate-850 text-slate-400 uppercase tracking-wider font-bold">
+                        <th className="py-3 px-4">Date</th>
+                        <th className="py-3 px-4">Type</th>
+                        <th className="py-3 px-4">Gross Amt</th>
+                        <th className="py-3 px-4">Net Amt</th>
+                        <th className="py-3 px-4">Job Reference</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850">
+                      {ledgerTransactions.map((tx) => (
+                        <tr key={tx.id} className="hover:bg-slate-850/10 transition-colors">
+                          <td className="py-3.5 px-4 font-medium text-slate-350">
+                            {new Date(tx.created_at).toLocaleString()}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className={`font-bold uppercase text-[9px] px-2 py-0.5 rounded-md ${
+                              tx.type === 'topup'
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                : tx.type === 'promo_credit'
+                                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                : 'bg-rose-500/10 text-rose-450 border border-rose-500/20'
+                            }`}>
+                              {tx.type.replace(/_/g, ' ')}
+                            </span>
+                          </td>
+                          <td className={`py-3.5 px-4 font-bold ${tx.type === 'commission_deduction' ? 'text-rose-400' : 'text-slate-200'}`}>
+                            {tx.type === 'commission_deduction' ? '-' : '+'}${tx.amount.toFixed(2)}
+                          </td>
+                          <td className="py-3.5 px-4 font-bold text-emerald-400">
+                            {tx.net_amount !== null ? `+$${tx.net_amount.toFixed(2)}` : '—'}
+                          </td>
+                          <td className="py-3.5 px-4 font-mono text-slate-500 select-all">
+                            {tx.job_id || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADMIN MANUAL TOP-UP MODAL */}
+      {showTopUpModalAdmin && selectedUser && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] shadow-2xl relative">
+            <button
+              onClick={() => {
+                setShowTopUpModalAdmin(false);
+                setSelectedUser(null);
+              }}
+              className="absolute top-6 right-6 p-2 text-slate-500 hover:text-white transition-colors cursor-pointer bg-slate-850 rounded-xl"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 bg-[#F2A33D]/10 text-[#F2A33D] rounded-xl flex items-center justify-center">
+                <UserPlus className="w-5 h-5" />
+              </div>
+              <h2 className="text-xl font-bold text-white">Manual Float Adjust</h2>
+            </div>
+
+            <form onSubmit={handleAdminTopUpSubmit} className="space-y-4 text-xs font-semibold">
+              <div className="bg-slate-950/30 border border-slate-850 p-4 rounded-2xl mb-2 text-slate-350">
+                <p>Courier: <span className="font-bold text-white">{selectedUser.full_name || 'No Name'}</span></p>
+                <p className="mt-1">Current Balance: <span className="font-bold text-emerald-400">${selectedUser.courier_wallets?.balance !== undefined ? selectedUser.courier_wallets.balance.toFixed(2) : '0.00'}</span></p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-400 ml-1">Adjustment Credit Amount (USD)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  min="0.01"
+                  placeholder="10.00"
+                  value={adminTopUpAmount}
+                  onChange={(e) => setAdminTopUpAmount(e.target.value)}
+                  className="w-full bg-slate-950/40 border border-slate-800 rounded-2xl py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-[#F2A33D]/40"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={adminTopUpLoading}
+                className="w-full bg-[#F2A33D] hover:bg-[#F2A33D]/90 text-white font-bold py-3.5 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer mt-4"
+              >
+                {adminTopUpLoading ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <span>Submit Credit Adjust</span>
                 )}
               </button>
             </form>

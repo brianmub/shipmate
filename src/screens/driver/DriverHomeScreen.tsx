@@ -12,6 +12,8 @@ export const DriverHomeScreen = ({ navigation }: any) => {
     const { user } = useAuthStore();
     const [isOnline, setIsOnline] = useState(false);
     const [profile, setProfile] = useState<any>(null);
+    const [walletBalance, setWalletBalance] = useState<number | null>(null);
+    const [walletStatus, setWalletStatus] = useState<string>('active');
     const [loading, setLoading] = useState(true);
 
     const firstName = user?.user_metadata?.full_name?.split(' ')[0] || 'Courier';
@@ -22,7 +24,22 @@ export const DriverHomeScreen = ({ navigation }: any) => {
             setLoading(true);
             const data = await userService.getDriverProfile(user.id);
             setProfile(data);
-            setIsOnline(data.is_online);
+            
+            const walletData = await userService.getCourierWallet(user.id);
+            if (walletData) {
+                setWalletBalance(walletData.balance);
+                setWalletStatus(walletData.status);
+                if (walletData.status === 'locked') {
+                    setIsOnline(false);
+                    if (data.is_online) {
+                        await userService.toggleOnlineStatus(user.id, false);
+                    }
+                } else {
+                    setIsOnline(data.is_online ?? false);
+                }
+            } else {
+                setIsOnline(data.is_online ?? false);
+            }
         } catch (error) {
             console.error('Error fetching driver profile:', error);
         } finally {
@@ -31,10 +48,18 @@ export const DriverHomeScreen = ({ navigation }: any) => {
     };
 
     useEffect(() => {
-        fetchData();
-    }, []);
+        const unsubscribe = navigation.addListener('focus', () => {
+            fetchData();
+        });
+        return unsubscribe;
+    }, [navigation]);
 
     const toggleOnline = async () => {
+        if (walletStatus === 'locked') {
+            Alert.alert('Wallet Locked', `Your wallet is locked due to low balance ($${walletBalance?.toFixed(2) || '0.00'}). Please top up your wallet to go online.`);
+            setIsOnline(false);
+            return;
+        }
         const nextState = !isOnline;
         setIsOnline(nextState);
         try {
@@ -76,7 +101,25 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                         </BlurView>
                     </View>
 
-                    {!isOnline && (
+                    {/* WALLET STATUS BANNERS */}
+                    {walletStatus === 'locked' && (
+                        <View style={[styles.offlineWarning, { backgroundColor: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.4)' }]}>
+                            <Text style={styles.warningIcon}>🔒</Text>
+                            <Text style={[styles.offlineWarningText, { color: '#FCA5A5' }]}>
+                                Wallet Lockout: Your balance is below $0.25. Please go to the Wallet screen and top up at least $5.00 to accept new jobs.
+                            </Text>
+                        </View>
+                    )}
+                    {walletStatus !== 'locked' && walletBalance !== null && walletBalance <= 3.00 && (
+                        <View style={[styles.offlineWarning, { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: 'rgba(245, 158, 11, 0.4)' }]}>
+                            <Text style={styles.warningIcon}>⚠️</Text>
+                            <Text style={[styles.offlineWarningText, { color: '#FCD34D' }]}>
+                                Low Wallet Balance: Your balance is ${walletBalance.toFixed(2)}. Please top up soon to prevent account lockout.
+                            </Text>
+                        </View>
+                    )}
+
+                    {!isOnline && walletStatus !== 'locked' && (
                         <View style={styles.offlineWarning}>
                             <Text style={styles.warningIcon}>⚠️</Text>
                             <Text style={styles.offlineWarningText}>
@@ -94,8 +137,8 @@ export const DriverHomeScreen = ({ navigation }: any) => {
 
                     <View style={styles.statsGrid}>
                         <BlurView intensity={20} tint="light" style={styles.statCardContainer}>
-                            <Text style={styles.statLabel}>Earnings</Text>
-                            <Text style={styles.statValue}>${profile?.available_balance?.toFixed(2) || '0.00'}</Text>
+                            <Text style={styles.statLabel}>Wallet Balance</Text>
+                            <Text style={[styles.statValue, { color: '#34D399' }]}>${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}</Text>
                         </BlurView>
                         <BlurView intensity={20} tint="light" style={styles.statCardContainer}>
                             <Text style={styles.statLabel}>Deliveries</Text>
@@ -123,16 +166,16 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                             style={styles.jobsButtonContainer}
                             activeOpacity={0.8}
                             onPress={() => navigation.navigate('Jobs')}
-                            disabled={!isOnline}
+                            disabled={!isOnline || walletStatus === 'locked'}
                         >
                             <LinearGradient
-                                colors={isOnline ? ['#055FEE', '#5B99F2'] : ['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
+                                colors={isOnline && walletStatus !== 'locked' ? ['#055FEE', '#5B99F2'] : ['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
                                 style={styles.jobsGradient}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
                             >
-                                <Text style={[styles.jobsButtonText, !isOnline && styles.jobsButtonTextOffline]}>
-                                    {isOnline ? 'View Available Jobs' : 'Offline'}
+                                <Text style={[styles.jobsButtonText, (!isOnline || walletStatus === 'locked') && styles.jobsButtonTextOffline]}>
+                                    {walletStatus === 'locked' ? 'Locked (Low Balance)' : isOnline ? 'View Available Jobs' : 'Go Online to View Jobs'}
                                 </Text>
                             </LinearGradient>
                         </TouchableOpacity>

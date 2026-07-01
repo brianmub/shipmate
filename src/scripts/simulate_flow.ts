@@ -64,7 +64,7 @@ const runSimulation = async () => {
     console.log('📊 Driver Metrics:');
     console.log(`   - Total Earnings: $${driver?.total_earnings}`);
     console.log(`   - Available Balance: $${driver?.available_balance}`);
-    console.log('   - (Expected: $87.00 if commission is 13%)');
+    console.log('   - (Expected: Full $100.00 order amount credited)');
 
     console.log('\n✨ Simulation Complete!');
 };

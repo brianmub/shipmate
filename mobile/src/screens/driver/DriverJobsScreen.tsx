@@ -13,6 +13,8 @@ export const DriverJobsScreen = ({ navigation }: any) => {
     const [jobs, setJobs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [isVerified, setIsVerified] = useState<boolean | null>(null);
+    const [walletStatus, setWalletStatus] = useState<string>('active');
+    const [walletBalance, setWalletBalance] = useState<number | null>(null);
     const [selectedJob, setSelectedJob] = useState<any>(null);
     const [offerModalVisible, setOfferModalVisible] = useState(false);
     const [acceptingId, setAcceptingId] = useState<string | null>(null);
@@ -69,6 +71,18 @@ export const DriverJobsScreen = ({ navigation }: any) => {
         }
     };
 
+    const checkWalletStatus = async () => {
+        try {
+            const walletData = await userService.getCourierWallet(user?.id);
+            if (walletData) {
+                setWalletStatus(walletData.status);
+                setWalletBalance(walletData.balance);
+            }
+        } catch (error) {
+            console.error('Error checking wallet status:', error);
+        }
+    };
+
     const fetchPendingJobs = async () => {
         try {
             setLoading(true);
@@ -119,11 +133,13 @@ export const DriverJobsScreen = ({ navigation }: any) => {
         // Refresh when focused
         const unsubscribe = navigation.addListener('focus', () => {
             checkVerificationStatus();
+            checkWalletStatus();
             fetchPendingJobs();
         });
 
         // Run initially
         checkVerificationStatus();
+        checkWalletStatus();
         fetchPendingJobs();
 
         // Optional: Subscribe to new orders here if realtime is enabled
@@ -313,6 +329,29 @@ export const DriverJobsScreen = ({ navigation }: any) => {
                                     style={styles.verifyBtn}
                                 >
                                     <Text style={styles.verifyBtnText}>Start Security Check</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </BlurView>
+                    </View>
+                ) : walletStatus === 'locked' ? (
+                    <View style={styles.centerContainer}>
+                        <BlurView intensity={20} tint="light" style={styles.securityCard}>
+                            <View style={styles.securityIconCircle}>
+                                <Text style={{ fontSize: 32 }}>🔒</Text>
+                            </View>
+                            <Text style={styles.securityTitle}>Wallet Locked Out</Text>
+                            <Text style={styles.securityText}>
+                                Your float balance is below $0.25 (${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}). Please top up your wallet to resume accepting new delivery jobs.
+                            </Text>
+                            <TouchableOpacity 
+                                style={styles.verifyBtnContainer}
+                                onPress={() => navigation.navigate('Wallet')}
+                            >
+                                <LinearGradient
+                                    colors={['#055FEE', '#5B99F2']}
+                                    style={styles.verifyBtn}
+                                >
+                                    <Text style={styles.verifyBtnText}>Go to Wallet</Text>
                                 </LinearGradient>
                             </TouchableOpacity>
                         </BlurView>

@@ -117,4 +117,33 @@ export interface Order {
     
     created_at: string;
     updated_at: string;
+    courier_wallets?: CourierWalletInfo | null;
 }
+
+export type CourierWalletStatus = 'active' | 'locked';
+export type WalletTransactionType = 'topup' | 'commission_deduction' | 'promo_credit';
+
+export interface CourierWalletInfo {
+    balance: number;
+    status: CourierWalletStatus;
+}
+
+export interface CourierWallet {
+    courier_id: string;
+    balance: number;
+    status: CourierWalletStatus;
+    promo_applied: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface WalletTransaction {
+    id: string;
+    courier_id: string;
+    type: WalletTransactionType;
+    amount: number;
+    net_amount: number | null;
+    job_id: string | null;
+    created_at: string;
+}
+

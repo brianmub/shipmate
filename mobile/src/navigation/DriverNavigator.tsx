@@ -5,6 +5,7 @@ import { createDrawerNavigator } from '@react-navigation/drawer';
 import { DriverHomeScreen } from '../screens/driver/DriverHomeScreen';
 import { DriverJobsScreen } from '../screens/driver/DriverJobsScreen';
 import { DriverProfileScreen } from '../screens/driver/DriverProfileScreen';
+import { WalletScreen } from '../screens/driver/WalletScreen';
 
 import { DriverOnboardingScreen } from '../screens/driver/DriverOnboardingScreen';
 import { DriverActiveJobScreen } from '../screens/driver/DriverActiveJobScreen';
@@ -14,15 +15,21 @@ import { ChatScreen } from '../screens/ChatScreen';
 
 import { useAuthStore } from '../store/authStore';
 import { OnboardingNavigator } from './OnboardingNavigator';
+import { DriverStatusScreen } from '../screens/driver/DriverStatusScreen';
 
 const Drawer = createDrawerNavigator();
 
 export const DriverNavigator = () => {
     const { verificationStatus } = useAuthStore();
 
-    // If driver hasn't started onboarding, show onboarding flow
-    if (verificationStatus === null) {
+    // If driver is still in the onboarding process, show onboarding forms
+    if (verificationStatus === null || verificationStatus === 'onboarding') {
         return <OnboardingNavigator />;
+    }
+
+    // If driver has submitted but is not approved (pending, rejected, or suspended), show status screen
+    if (verificationStatus !== 'approved') {
+        return <DriverStatusScreen />;
     }
 
     return (
@@ -52,6 +59,11 @@ export const DriverNavigator = () => {
                 name="Earnings"
                 component={EarningsScreen}
                 options={{ title: 'My Earnings' }}
+            />
+            <Drawer.Screen
+                name="Wallet"
+                component={WalletScreen}
+                options={{ title: 'My Wallet' }}
             />
             <Drawer.Screen
                 name="Profile"

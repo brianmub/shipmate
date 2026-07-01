@@ -123,7 +123,7 @@ async function runFullSystemTest() {
 
         // In a real test, we'd check the driver table balance
         console.log('   - Verifying balance updates...');
-        console.log('   - Expecting: $100 - 13% commission = $87.00');
+        console.log('   - Expecting: Full $100.00 credited to available_balance (Commission handled via prepaid wallet)');
         console.log('   ✅ Earnings successfully calculated and applied');
 
         console.log('\n✨ [SUCCESS] All features and flows validated successfully!');

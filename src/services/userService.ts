@@ -58,14 +58,40 @@ export const userService = {
      * Fetch driver verification status
      */
     async getDriverStatus(userId: string) {
-        const { data, error } = await supabase
-            .from('drivers')
-            .select('verification_status')
-            .eq('id', userId)
-            .single();
-        
-        if (error) throw error;
-        return data.verification_status;
+        try {
+            // 1. Fetch driver status
+            const { data: driverData, error: driverError } = await supabase
+                .from('drivers')
+                .select('verification_status')
+                .eq('id', userId)
+                .single();
+            
+            if (driverError) {
+                if (driverError.code === 'PGRST116') return 'onboarding'; // No profile created yet
+                throw driverError;
+            }
+
+            // 2. Fetch driver application details to check onboarding completion
+            const { data: appData, error: appError } = await supabase
+                .from('driver_applications')
+                .select('screening_status')
+                .eq('id', userId)
+                .single();
+
+            // If no application exists, or screening_status is not 'completed', they are still onboarding
+            if (appError || !appData || appData.screening_status !== 'completed') {
+                // If driver is already approved in drivers subtable (e.g. seeded drivers), respect it
+                if (driverData.verification_status === 'approved') {
+                    return 'approved';
+                }
+                return 'onboarding';
+            }
+
+            return driverData.verification_status;
+        } catch (error) {
+            console.log('Error fetching driver status, defaulting to onboarding:', error);
+            return 'onboarding';
+        }
     },
 
     /**
@@ -134,5 +160,36 @@ export const userService = {
             .eq('id', driverId);
 
         if (updateError) throw updateError;
+    },
+
+    /**
+     * Fetch courier's wallet details
+     */
+    async getCourierWallet(courierId: string) {
+        const { data, error } = await supabase
+            .from('courier_wallets')
+            .select('*')
+            .eq('courier_id', courierId)
+            .single();
+
+        if (error) {
+            if (error.code === 'PGRST116') return null; // No wallet found yet
+            throw error;
+        }
+        return data;
+    },
+
+    /**
+     * Fetch courier's wallet transaction history
+     */
+    async getWalletTransactions(courierId: string) {
+        const { data, error } = await supabase
+            .from('wallet_transactions')
+            .select('*')
+            .eq('courier_id', courierId)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        return data;
     }
 };

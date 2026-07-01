@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { Session, User } from '@supabase/supabase-js';
 
 type UserRole = 'customer' | 'driver' | 'admin' | null;
-type VerificationStatus = 'pending' | 'approved' | 'rejected' | 'suspended' | null;
+type VerificationStatus = 'onboarding' | 'pending' | 'approved' | 'rejected' | 'suspended' | null;
 
 interface AuthState {
     session: Session | null;
