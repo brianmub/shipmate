@@ -86,7 +86,7 @@ export const VehiclePhotosScreen = ({ navigation }: any) => {
 
                 Alert.alert(
                     "Application Submitted",
-                    "Your driver application is now under review. We will notify you once approved!",
+                    "Your Mate application is now under review. We will notify you once approved!",
                     [{ text: "Great!", onPress: () => {
                         try {
                             navigation.navigate('Dashboard');

@@ -42,7 +42,7 @@ export const DriverNavigator = () => {
             <Drawer.Screen
                 name="Dashboard"
                 component={DriverHomeScreen}
-                options={{ title: 'Driver Dashboard' }}
+                options={{ title: 'Mate Dashboard' }}
             />
             <Drawer.Screen
                 name="Jobs"

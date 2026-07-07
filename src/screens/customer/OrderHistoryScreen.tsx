@@ -92,7 +92,7 @@ export const OrderHistoryScreen = ({ navigation }: any) => {
                             onPress={() => navigation.navigate('CustomerTracking', { orderId: item.id })}
                         >
                             <Text style={[styles.detailsButtonText, { color: '#fff' }]}>
-                                {item.status === 'pending' ? 'Find Courier' : 'Track Order'}
+                                {item.status === 'pending' ? 'Find Mate' : 'Track Order'}
                             </Text>
                         </TouchableOpacity>
                     ) : (

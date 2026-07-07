@@ -135,7 +135,7 @@ export const WalletScreen = ({ navigation }: any) => {
                 >
                     <View style={styles.header}>
                         <Text style={styles.headerTitle}>My Wallet</Text>
-                        <Text style={styles.headerSubtitle}>Manage your courier float balance</Text>
+                        <Text style={styles.headerSubtitle}>Manage your Mate float balance</Text>
                     </View>
 
                     {loading ? (

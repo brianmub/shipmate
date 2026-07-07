@@ -41,7 +41,7 @@ export const VehiclePhotosScreen = ({ navigation }: any) => {
     const handleSubmit = async () => {
         Alert.alert(
             "Application Submitted",
-            "Your driver application is now under review. We will notify you once approved!",
+            "Your Mate application is now under review. We will notify you once approved!",
             [{ text: "Great!", onPress: () => navigation.navigate('Home') }]
         );
     };

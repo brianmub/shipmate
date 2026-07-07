@@ -126,8 +126,8 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                             <View>
                                 <Text style={styles.jobType}>{isDelivery ? 'Package Delivery' : 'Errand'}</Text>
                                 <Text style={[styles.statusText, { color: (order.status === 'completed' || order.status === 'delivered') ? '#22C55E' : '#055FEE' }]}>
-                                    {order.status === 'in_progress' ? 'Driver is on the way' :
-                                        order.status === 'accepted' ? 'Driver is heading to pickup' :
+                                    {order.status === 'in_progress' ? 'Your Mate is on the way' :
+                                        order.status === 'accepted' ? 'Your Mate is heading to pickup' :
                                             order.status === 'completed' ? 'Delivered' : 'Pending'}
                                 </Text>
                             </View>
@@ -137,16 +137,16 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                             <View style={styles.viewersCard}>
                                 <View style={styles.viewersHeader}>
                                     <ActivityIndicator size="small" color="#F59E0B" style={{ marginRight: 8 }} />
-                                    <Text style={styles.viewersTitle}>Searching for Couriers...</Text>
+                                    <Text style={styles.viewersTitle}>Finding your Mate...</Text>
                                 </View>
                                 <Text style={styles.viewersSubtitle}>
-                                    We are finding nearby drivers for your {isDelivery ? 'delivery' : 'errand'}.
+                                    We are finding nearby Mates for your {isDelivery ? 'delivery' : 'errand'}.
                                 </Text>
                                 <View style={styles.viewersSeparator} />
                                 {viewingCouriers.length > 0 ? (
                                     <View>
                                         <Text style={styles.viewingCountText}>
-                                            👀 {viewingCouriers.length} courier{viewingCouriers.length > 1 ? 's' : ''} currently viewing your offer:
+                                            👀 {viewingCouriers.length} Mate{viewingCouriers.length > 1 ? 's' : ''} currently viewing your offer:
                                         </Text>
                                         {viewingCouriers.map((courier) => (
                                             <View key={courier.id} style={styles.courierRow}>
@@ -163,7 +163,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                     </View>
                                 ) : (
                                     <Text style={styles.waitingText}>
-                                        🔍 Waiting for couriers to inspect details...
+                                        🔍 Waiting for Mates to inspect details...
                                     </Text>
                                 )}
                             </View>
@@ -173,7 +173,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                     <Text style={styles.driverAvatarText}>{driverName.charAt(0).toUpperCase()}</Text>
                                 </View>
                                 <View style={styles.driverDetails}>
-                                    <Text style={styles.driverNameLabel}>Your Courier</Text>
+                                    <Text style={styles.driverNameLabel}>Your Mate</Text>
                                     <Text style={styles.driverName}>{driverName}</Text>
                                 </View>
                                 <TouchableOpacity style={styles.contactBtn}>

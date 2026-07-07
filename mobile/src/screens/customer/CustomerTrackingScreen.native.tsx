@@ -53,7 +53,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
         try {
             setLoading(true);
             await orderService.acceptOffer(orderId, offer.id, offer.driver_id);
-            Alert.alert("Success", "Courier hired successfully! They are on their way.");
+            Alert.alert("Success", "Mate assigned successfully! They are on their way.");
             fetchOrder();
         } catch (error: any) {
             Alert.alert("Error", error.message);
@@ -242,8 +242,8 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                             <View>
                                 <Text style={styles.jobType}>{isDelivery ? 'Package Delivery' : 'Errand'}</Text>
                                 <Text style={[styles.statusText, { color: (order.status === 'completed' || order.status === 'delivered') ? '#22C55E' : '#055FEE' }]}>
-                                    {order.status === 'in_progress' ? 'Driver is on the way' :
-                                        order.status === 'accepted' ? 'Driver is heading to pickup' :
+                                    {order.status === 'in_progress' ? 'Your Mate is on the way' :
+                                        order.status === 'accepted' ? 'Your Mate is heading to pickup' :
                                             order.status === 'completed' ? 'Delivered' : 'Pending'}
                                 </Text>
                             </View>
@@ -254,10 +254,10 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                 <View style={styles.viewersCard}>
                                     <View style={styles.viewersHeader}>
                                         <ActivityIndicator size="small" color="#F59E0B" style={{ marginRight: 8 }} />
-                                        <Text style={styles.viewersTitle}>Searching for Couriers...</Text>
+                                        <Text style={styles.viewersTitle}>Finding your Mate...</Text>
                                     </View>
                                     <Text style={styles.viewersSubtitle}>
-                                        We are finding nearby drivers for your {isDelivery ? 'delivery' : 'errand'}.
+                                        We are finding nearby Mates for your {isDelivery ? 'delivery' : 'errand'}.
                                     </Text>
                                     <View style={styles.viewersSeparator} />
                                     {viewingCouriers.length > 0 ? (
@@ -307,7 +307,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                     <Text style={styles.driverAvatarText}>{driverName.charAt(0).toUpperCase()}</Text>
                                 </View>
                                 <View style={styles.driverDetails}>
-                                    <Text style={styles.driverNameLabel}>Your Courier</Text>
+                                    <Text style={styles.driverNameLabel}>Your Mate</Text>
                                     <Text style={styles.driverName}>{driverName}</Text>
                                 </View>
                                 <View style={styles.communicationButtons}>
@@ -317,7 +317,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                             if (order.driver?.phone) {
                                                 Linking.openURL(`tel:${order.driver.phone}`);
                                             } else {
-                                                Alert.alert('Unavailable', 'Courier phone number is not available.');
+                                                Alert.alert('Unavailable', "Mate's phone number is not available.");
                                             }
                                         }}
                                     >

@@ -202,7 +202,7 @@ export const Landing = () => {
             </div>
             <div>
               <p className="font-extrabold text-sm text-[#0B1F4D]">🛡️ Safe & Secure</p>
-              <p className="text-xs text-[#0B1F4D]/60">Vetted professional drivers</p>
+              <p className="text-xs text-[#0B1F4D]/60">Vetted professional Mates</p>
             </div>
           </div>
 
@@ -258,9 +258,9 @@ export const Landing = () => {
             <div className="pt-4 flex justify-center text-[#F2A33D]">
               <Users className="w-12 h-12" />
             </div>
-            <h3 className="text-xl font-bold text-[#0B1F4D]">Get Matched with a Courier</h3>
+            <h3 className="text-xl font-bold text-[#0B1F4D]">Get Matched with a Mate</h3>
             <p className="text-[#0B1F4D]/70 text-sm leading-relaxed">
-              Our smart routing matches you with a nearby courier who immediately heads to the pickup point.
+              Our smart routing matches you with a nearby Mate who immediately heads to the pickup point.
             </p>
           </div>
 
@@ -332,7 +332,7 @@ export const Landing = () => {
             </li>
             <li className="flex items-start gap-2.5">
               <CheckCircle2 className="w-5 h-5 text-[#2D5FE0] shrink-0 mt-0.5" />
-              <span className="font-bold text-sm text-[#0B1F4D]">Real-Time GPS Driver Tracking</span>
+              <span className="font-bold text-sm text-[#0B1F4D]">Real-Time GPS Mate Tracking</span>
             </li>
             <li className="flex items-start gap-2.5">
               <CheckCircle2 className="w-5 h-5 text-[#2D5FE0] shrink-0 mt-0.5" />
@@ -434,7 +434,7 @@ export const Landing = () => {
                     <Award className="w-6 h-6" />
                   </div>
                   <div>
-                    <p className="font-extrabold text-sm text-white">Courier Partner</p>
+                    <p className="font-extrabold text-sm text-white">Mate Partner</p>
                     <p className="text-xs text-white/60">Tinashe M.</p>
                   </div>
                 </div>
@@ -474,11 +474,11 @@ export const Landing = () => {
 
           <div className="order-1 lg:order-2 space-y-6">
             <div className="inline-block bg-[#F2A33D]/10 text-[#F2A33D] text-xs font-bold uppercase tracking-wider px-4 py-1.5 rounded-full">
-              FOR COURIERS
+              FOR MATES
             </div>
             <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-[#0B1F4D]">Drive with Shipmate. <br/>Earn on your own terms.</h2>
             <p className="text-base text-[#0B1F4D]/80 leading-relaxed">
-              Got a motorcycle or a delivery van? Partner with Shipmate to get a reliable stream of courier jobs, flexible hours, and weekly payouts direct to your EcoCash account.
+              Got a motorcycle or a delivery van? Partner with Shipmate to get a reliable stream of Mate jobs, flexible hours, and weekly payouts direct to your EcoCash account.
             </p>
 
             <ul className="space-y-4">
@@ -505,7 +505,7 @@ export const Landing = () => {
                 onClick={() => scrollToSection('download')}
                 className="w-full sm:w-auto bg-[#F2A33D] hover:bg-[#F2A33D]/90 text-white font-bold px-8 py-4 rounded-2xl shadow-xl shadow-[#F2A33D]/20 transition-all hover:-translate-y-1 text-center cursor-pointer"
               >
-                Apply to be a Courier
+                Apply to be a Mate
               </button>
             </div>
           </div>
@@ -517,7 +517,7 @@ export const Landing = () => {
         <div className="space-y-4">
           <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-[#0B1F4D]">Join the Shipmate Beta</h2>
           <p className="text-base text-[#0B1F4D]/70 max-w-xl mx-auto">
-            We are currently in private beta testing. Sign up below to get early access to our customer and driver apps as soon as we launch public testing.
+            We are currently in private beta testing. Sign up below to get early access to our customer and Mate apps as soon as we launch public testing.
           </p>
         </div>
 

@@ -37,7 +37,7 @@ export const DriverProfileScreen = ({ navigation }: any) => {
                         <Text style={styles.nameText}>{fullName}</Text>
                         <View style={styles.badgeContainer}>
                             <Text style={styles.badgeIcon}>✓</Text>
-                            <Text style={styles.badgeText}>Approved Courier</Text>
+                            <Text style={styles.badgeText}>Approved Mate</Text>
                         </View>
                     </View>
                 </BlurView>

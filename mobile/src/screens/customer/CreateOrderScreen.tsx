@@ -251,7 +251,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
             
             Alert.alert(
                 "Order Confirmed", 
-                "Your request has been placed and is waiting for a courier!", 
+                "Your request has been placed and is waiting for your Mate!", 
                 [{ 
                     text: "Track Order", 
                     onPress: () => navigation.navigate('CustomerTracking', { orderId: createdOrder.id }) 
@@ -337,7 +337,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                         <Text style={styles.sectionIcon}>📷</Text>
                                         <Text style={styles.sectionTitle}>Vision AI Scan</Text>
                                     </View>
-                                    <Text style={styles.label}>Verify your package size for the driver</Text>
+                                    <Text style={styles.label}>Verify your package size for your Mate</Text>
                                     
                                     <TouchableOpacity 
                                         style={styles.scanButton}
@@ -527,7 +527,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                 {loading ? (
                                     <ActivityIndicator color="#FFFFFF" />
                                 ) : (
-                                    <Text style={styles.submitButtonText}>Confirm & Find Driver</Text>
+                                    <Text style={styles.submitButtonText}>Confirm & Find your Mate</Text>
                                 )}
                             </LinearGradient>
                         </TouchableOpacity>

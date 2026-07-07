@@ -229,7 +229,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
             setBidPrice((pricingSettings?.base_delivery_fee ?? 5.00).toFixed(2));
 
             const title = "Order Confirmed";
-            const msg = "Your request has been placed and is waiting for a courier!";
+            const msg = "Your request has been placed and is waiting for your Mate!";
             if (Platform.OS === 'web') {
                 alert(`${title}: ${msg}`);
                 navigation.navigate('CustomerTracking', { orderId: order.id });
@@ -325,7 +325,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                         <Text style={styles.sectionIcon}>📷</Text>
                                         <Text style={styles.sectionTitle}>Vision AI Scan</Text>
                                     </View>
-                                    <Text style={styles.label}>Verify your package size for the driver</Text>
+                                    <Text style={styles.label}>Verify your package size for your Mate</Text>
                                     
                                     <TouchableOpacity 
                                         style={styles.scanButton}
@@ -497,7 +497,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                 {loading ? (
                                     <ActivityIndicator color="#FFFFFF" />
                                 ) : (
-                                    <Text style={styles.submitButtonText}>Confirm & Find Driver</Text>
+                                    <Text style={styles.submitButtonText}>Confirm & Find your Mate</Text>
                                 )}
                             </LinearGradient>
                         </TouchableOpacity>

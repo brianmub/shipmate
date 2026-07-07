@@ -126,7 +126,7 @@ export const SignUpScreen = ({ navigation }: any) => {
                                 onPress={() => handleRoleChange('driver')}
                                 activeOpacity={1}
                             >
-                                <Text style={[styles.roleBtnText, role === 'driver' && styles.activeRoleText]}>Driver</Text>
+                                <Text style={[styles.roleBtnText, role === 'driver' && styles.activeRoleText]}>Mate</Text>
                             </TouchableOpacity>
                         </View>
 

@@ -20,7 +20,7 @@ import { verificationService } from '../../../services/verificationService';
 
 const QUESTIONS = [
     "What type of vehicle will you be using for deliveries (motorbike, car, bicycle)?",
-    "Have you done delivery or courier work before? If so, where and for how long?",
+    "Have you done delivery or Mate work before? If so, where and for how long?",
     "Shipmate covers Harare, Bulawayo, and Mutare corridors. Which area(s) can you cover?",
     "If a parcel is damaged or lost during delivery, what do you think your responsibility would be?",
     "Are you available to work flexible hours, including weekends, if needed?"

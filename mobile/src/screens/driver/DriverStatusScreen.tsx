@@ -35,14 +35,14 @@ export const DriverStatusScreen = () => {
                     icon: 'alert-circle-outline',
                     iconColor: '#EF4444',
                     title: 'Application Declined',
-                    description: 'Unfortunately, your driver application has been reviewed and declined. Please contact our courier support team to appeal this decision.',
+                    description: 'Unfortunately, your Mate application has been reviewed and declined. Please contact our Mate support team to appeal this decision.',
                 };
             case 'suspended':
                 return {
                     icon: 'lock-closed-outline',
                     iconColor: '#F43F5E',
                     title: 'Account Suspended',
-                    description: 'Your courier account has been suspended due to activity violating our platform service policies. Contact support for assistance.',
+                    description: 'Your Mate account has been suspended due to activity violating our platform service policies. Contact support for assistance.',
                 };
             case 'pending':
             default:
@@ -63,7 +63,7 @@ export const DriverStatusScreen = () => {
             <SafeAreaView style={styles.safeArea}>
                 <View style={styles.header}>
                     <Text style={styles.brandTitle}>ShipMate</Text>
-                    <Text style={styles.brandSubtitle}>Courier Network</Text>
+                    <Text style={styles.brandSubtitle}>Mate Network</Text>
                 </View>
 
                 <View style={styles.cardContainer}>
