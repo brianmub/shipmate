@@ -481,7 +481,7 @@ const styles = StyleSheet.create({
         fontSize: 13,
         textAlign: 'center',
         lineHeight: 18,
-        fontWeight: '550',
+        fontWeight: '500',
     },
     topUpButtonContainer: {
         borderRadius: 16,
@@ -566,7 +566,7 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
     txAmountContainer: {
-        alignItems: 'end',
+        alignItems: 'flex-end',
     },
     txAmount: {
         fontSize: 16,

@@ -149,7 +149,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
     const handlePodComplete = async (proof: { signatureUrl: string; photoUrl: string }) => {
         try {
             setLoading(true);
-            await orderService.updateOrderStatus(activeJob.id, 'delivered');
+            await orderService.completeOrderWithProof(activeJob.id, proof.signatureUrl, proof.photoUrl);
             setPodVisible(false);
             Alert.alert("Job Completed!", "Great work! You have completed this delivery.");
             stopLocationTracking();

@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, StatusBar, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, StatusBar, Platform, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../../utils/supabase';
+import { orderService } from '../../services/orderService';
 
 export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     const { orderId } = route.params;
     const [order, setOrder] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [viewingCouriers, setViewingCouriers] = useState<any[]>([]);
+    const [acknowledging, setAcknowledging] = useState(false);
 
     const fetchOrder = async () => {
         try {
@@ -28,6 +30,34 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
             console.error('Error fetching tracking order:', error.message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleAcknowledgeDelivery = async () => {
+        try {
+            setAcknowledging(true);
+            await orderService.acknowledgeDelivery(orderId);
+            fetchOrder();
+        } catch (error: any) {
+            console.error("Failed to acknowledge delivery:", error.message);
+        } finally {
+            setAcknowledging(false);
+        }
+    };
+
+    const getStatusLabel = (status: string) => {
+        switch (status) {
+            case 'driver_assigned': return 'Mate assigned';
+            case 'en_route_to_pickup': return 'Mate heading to pickup';
+            case 'arrived_at_pickup': return 'Mate arrived at pickup';
+            case 'picked_up': return 'Package collected';
+            case 'en_route_to_delivery': return 'Mate heading to delivery';
+            case 'arrived_at_delivery': return 'Mate arrived at delivery';
+            case 'delivered': return order.customer_acknowledged ? 'Delivery Completed' : 'Delivered - Pending Confirmation';
+            case 'completed': return 'Delivery Completed';
+            case 'cancelled': return 'Cancelled';
+            case 'failed': return 'Failed';
+            default: return 'Pending';
         }
     };
 
@@ -126,9 +156,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                             <View>
                                 <Text style={styles.jobType}>{isDelivery ? 'Package Delivery' : 'Errand'}</Text>
                                 <Text style={[styles.statusText, { color: (order.status === 'completed' || order.status === 'delivered') ? '#22C55E' : '#055FEE' }]}>
-                                    {order.status === 'in_progress' ? 'Your Mate is on the way' :
-                                        order.status === 'accepted' ? 'Your Mate is heading to pickup' :
-                                            order.status === 'completed' ? 'Delivered' : 'Pending'}
+                                    {getStatusLabel(order.status)}
                                 </Text>
                             </View>
                         </View>
@@ -165,6 +193,81 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                     <Text style={styles.waitingText}>
                                         🔍 Waiting for Mates to inspect details...
                                     </Text>
+                                )}
+                            </View>
+                        ) : (order.status === 'delivered' || order.status === 'completed') ? (
+                            <View style={styles.acknowledgementContainer}>
+                                <Text style={styles.acknowledgementHeader}>
+                                    {order.status === 'completed' ? 'Delivery Confirmed! 🎉' : 'Package Delivered! 📦'}
+                                </Text>
+                                <Text style={styles.acknowledgementSubheader}>
+                                    {order.status === 'completed' 
+                                        ? 'Thank you for confirming. Your delivery is complete.' 
+                                        : 'Please verify the delivery proof below to confirm receipt.'}
+                                </Text>
+
+                                <View style={styles.proofRow}>
+                                    {order.delivery_photo_url && (
+                                        <View style={styles.proofCol}>
+                                            <Text style={styles.proofLabel}>Photo Proof</Text>
+                                            <View style={styles.proofImageWrapper}>
+                                                <Image 
+                                                    source={{ uri: order.delivery_photo_url }} 
+                                                    style={styles.proofImage} 
+                                                />
+                                            </View>
+                                        </View>
+                                    )}
+
+                                    {order.delivery_signature_url && (
+                                        <View style={styles.proofCol}>
+                                            <Text style={styles.proofLabel}>Recipient Signature</Text>
+                                            <View style={styles.proofSignatureWrapper}>
+                                                <Image 
+                                                    source={{ uri: order.delivery_signature_url }} 
+                                                    style={styles.proofSignature} 
+                                                    resizeMode="contain"
+                                                />
+                                            </View>
+                                        </View>
+                                    )}
+                                </View>
+
+                                {order.status === 'delivered' && !order.customer_acknowledged ? (
+                                    <TouchableOpacity
+                                        style={styles.acknowledgeButtonContainer}
+                                        activeOpacity={0.8}
+                                        onPress={handleAcknowledgeDelivery}
+                                        disabled={acknowledging}
+                                    >
+                                        <LinearGradient
+                                            colors={['#10B981', '#059669']}
+                                            style={styles.acknowledgeGradient}
+                                            start={{ x: 0, y: 0 }}
+                                            end={{ x: 1, y: 0 }}
+                                        >
+                                            {acknowledging ? (
+                                                <ActivityIndicator color="#FFFFFF" />
+                                            ) : (
+                                                <Text style={styles.acknowledgeButtonText}>Acknowledge Receipt</Text>
+                                            )}
+                                        </LinearGradient>
+                                    </TouchableOpacity>
+                                ) : (
+                                    <TouchableOpacity
+                                        style={styles.doneButtonContainer}
+                                        activeOpacity={0.8}
+                                        onPress={() => navigation.navigate('Home')}
+                                    >
+                                        <LinearGradient
+                                            colors={['#055FEE', '#5B99F2']}
+                                            style={styles.doneGradient}
+                                            start={{ x: 0, y: 0 }}
+                                            end={{ x: 1, y: 0 }}
+                                        >
+                                            <Text style={styles.doneButtonText}>Done</Text>
+                                        </LinearGradient>
+                                    </TouchableOpacity>
                                 )}
                             </View>
                         ) : (
@@ -329,5 +432,102 @@ const styles = StyleSheet.create({
         fontStyle: 'italic',
         textAlign: 'center',
         paddingVertical: 8,
+    },
+    acknowledgementContainer: {
+        backgroundColor: 'rgba(255, 255, 255, 0.85)',
+        borderRadius: 24,
+        padding: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(16, 185, 129, 0.2)',
+        marginBottom: 20,
+        shadowColor: '#10B981',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    acknowledgementHeader: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#0F172A',
+        textAlign: 'center',
+        marginBottom: 4,
+    },
+    acknowledgementSubheader: {
+        fontSize: 13,
+        color: '#64748B',
+        textAlign: 'center',
+        marginBottom: 16,
+        lineHeight: 18,
+    },
+    proofRow: {
+        flexDirection: 'row',
+        gap: 12,
+        marginBottom: 20,
+    },
+    proofCol: {
+        flex: 1,
+    },
+    proofLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#64748B',
+        marginBottom: 6,
+        textAlign: 'center',
+    },
+    proofImageWrapper: {
+        height: 100,
+        backgroundColor: '#F1F5F9',
+        borderRadius: 12,
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    proofImage: {
+        width: '100%',
+        height: '100%',
+    },
+    proofSignatureWrapper: {
+        height: 100,
+        backgroundColor: '#F1F5F9',
+        borderRadius: 12,
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 8,
+    },
+    proofSignature: {
+        width: '100%',
+        height: '100%',
+    },
+    acknowledgeButtonContainer: {
+        borderRadius: 14,
+        overflow: 'hidden',
+    },
+    acknowledgeGradient: {
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    acknowledgeButtonText: {
+        color: '#FFFFFF',
+        fontSize: 15,
+        fontWeight: '700',
+    },
+    doneButtonContainer: {
+        borderRadius: 14,
+        overflow: 'hidden',
+    },
+    doneGradient: {
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    doneButtonText: {
+        color: '#FFFFFF',
+        fontSize: 15,
+        fontWeight: '700',
     },
 });

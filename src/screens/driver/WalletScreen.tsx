@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Modal, ActivityIndicator, StatusBar, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import { WebView } from 'react-native-webview';
 import { useAuthStore } from '../../store/authStore';
 import { userService } from '../../services/userService';
 import { paymentService } from '../../services/paymentService';
@@ -18,10 +19,14 @@ export const WalletScreen = ({ navigation }: any) => {
     // Top-up Modal States
     const [showTopUpModal, setShowTopUpModal] = useState(false);
     const [topUpAmount, setTopUpAmount] = useState('10.00');
-    const [cardNumber, setCardNumber] = useState('4111 1111 1111 1111');
-    const [cardExpiry, setCardExpiry] = useState('12/28');
-    const [cardCvv, setCardCvv] = useState('123');
+    const [phoneNumber, setPhoneNumber] = useState(user?.phone || user?.user_metadata?.phone || '');
     const [submitting, setSubmitting] = useState(false);
+
+    // ClicknPay WebView Modal States
+    const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [paymentUrl, setPaymentUrl] = useState('');
+    const [currentClientRef, setCurrentClientRef] = useState('');
+    const [verifying, setVerifying] = useState(false);
 
     // Success Screen States
     const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -54,36 +59,67 @@ export const WalletScreen = ({ navigation }: any) => {
         setTopUpAmount(amount.toFixed(2));
     };
 
-    const handleTopUpSubmit = async () => {
+    const handleInitiatePayment = async () => {
         const amountNum = parseFloat(topUpAmount);
         if (isNaN(amountNum) || amountNum < 5.00) {
             Alert.alert('Invalid Amount', 'The minimum top-up amount is $5.00 USD.');
             return;
         }
 
-        if (!cardNumber || !cardExpiry || !cardCvv) {
-            Alert.alert('Missing Details', 'Please fill in all card details.');
+        if (!phoneNumber || phoneNumber.trim().length < 6) {
+            Alert.alert('Missing Phone', 'Please enter a valid phone number for ClicknPay.');
             return;
         }
 
         setSubmitting(true);
         try {
-            const response = await paymentService.topupWallet(user!.id, amountNum);
+            const orderRes = await paymentService.createPaymentOrder(user!.id, amountNum, phoneNumber.trim());
             
-            // Set receipt details for confirmation screen
-            setReceipt({
-                gross: response.grossAmount,
-                fee: response.fee,
-                net: response.netAmount
-            });
-
-            setShowTopUpModal(false);
-            setShowSuccessModal(true);
-            loadWalletData(false); // Reload wallet and transactions silently
+            if (orderRes.paymeURL) {
+                setPaymentUrl(orderRes.paymeURL);
+                setCurrentClientRef(orderRes.clientReference);
+                setShowTopUpModal(false);
+                setShowPaymentModal(true);
+            } else {
+                throw new Error('ClicknPay did not return a payment URL.');
+            }
         } catch (error: any) {
-            Alert.alert('Payment Failed', error.message || 'Payment simulation failed. Please try again.');
+            Alert.alert('Payment Order Failed', error.message || 'Could not initiate ClicknPay order. Please try again.');
         } finally {
             setSubmitting(false);
+        }
+    };
+
+    const handleVerifyPayment = async () => {
+        if (!currentClientRef || verifying) return;
+        setVerifying(true);
+        try {
+            const amountNum = parseFloat(topUpAmount) || 5.00;
+            const verifyRes = await paymentService.verifyPaymentStatus(user!.id, currentClientRef, amountNum);
+
+            if (verifyRes.status === 'SUCCESS' || verifyRes.success) {
+                setShowPaymentModal(false);
+                setReceipt({
+                    gross: verifyRes.grossAmount || amountNum,
+                    fee: verifyRes.fee || 0,
+                    net: verifyRes.netAmount || amountNum
+                });
+                setShowSuccessModal(true);
+                loadWalletData(false);
+            } else {
+                Alert.alert(
+                    'Payment Pending or Incomplete',
+                    verifyRes.message || 'Payment has not been confirmed yet. If you have completed payment, please check again in a few seconds.',
+                    [
+                        { text: 'Check Again', onPress: () => handleVerifyPayment() },
+                        { text: 'Close', style: 'cancel' }
+                    ]
+                );
+            }
+        } catch (error: any) {
+            Alert.alert('Verification Error', error.message || 'Could not verify payment status.');
+        } finally {
+            setVerifying(false);
         }
     };
 
@@ -184,7 +220,7 @@ export const WalletScreen = ({ navigation }: any) => {
                                     start={{ x: 0, y: 0 }}
                                     end={{ x: 1, y: 0 }}
                                 >
-                                    <Text style={styles.topUpButtonText}>Top Up Wallet</Text>
+                                    <Text style={styles.topUpButtonText}>Top Up with ClicknPay</Text>
                                 </LinearGradient>
                             </TouchableOpacity>
 
@@ -228,7 +264,7 @@ export const WalletScreen = ({ navigation }: any) => {
                 </ScrollView>
             </SafeAreaView>
 
-            {/* ClickNPay Card top-up Modal */}
+            {/* ClickNPay Top-up Initial Setup Modal */}
             <Modal
                 visible={showTopUpModal}
                 animationType="slide"
@@ -238,7 +274,7 @@ export const WalletScreen = ({ navigation }: any) => {
                 <View style={styles.modalOverlay}>
                     <BlurView intensity={90} tint="dark" style={styles.modalContent}>
                         <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Top Up with ClickNPay</Text>
+                            <Text style={styles.modalTitle}>Top Up with ClicknPay</Text>
                             <TouchableOpacity onPress={() => setShowTopUpModal(false)} style={styles.closeModalButton}>
                                 <Text style={styles.closeModalText}>✕</Text>
                             </TouchableOpacity>
@@ -271,45 +307,20 @@ export const WalletScreen = ({ navigation }: any) => {
 
                             <View style={styles.divider} />
 
-                            <Text style={styles.inputLabel}>Card Number</Text>
+                            <Text style={styles.inputLabel}>Phone Number for Payment</Text>
                             <TextInput
                                 style={styles.cardInput}
-                                value={cardNumber}
-                                onChangeText={setCardNumber}
-                                keyboardType="number-pad"
-                                placeholder="4111 1111 1111 1111"
+                                value={phoneNumber}
+                                onChangeText={setPhoneNumber}
+                                keyboardType="phone-pad"
+                                placeholder="+263 77 123 4567"
                                 placeholderTextColor="#64748B"
                             />
-
-                            <View style={styles.cardExpiryRow}>
-                                <View style={{ flex: 1, marginRight: 12 }}>
-                                    <Text style={styles.inputLabel}>Expiry</Text>
-                                    <TextInput
-                                        style={styles.cardInput}
-                                        value={cardExpiry}
-                                        onChangeText={setCardExpiry}
-                                        placeholder="MM/YY"
-                                        placeholderTextColor="#64748B"
-                                    />
-                                </View>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.inputLabel}>CVV</Text>
-                                    <TextInput
-                                        style={styles.cardInput}
-                                        value={cardCvv}
-                                        onChangeText={setCardCvv}
-                                        keyboardType="number-pad"
-                                        secureTextEntry
-                                        placeholder="123"
-                                        placeholderTextColor="#64748B"
-                                    />
-                                </View>
-                            </View>
 
                             <TouchableOpacity 
                                 style={[styles.topUpSubmitButton, submitting && styles.disabledButton]}
                                 activeOpacity={0.8}
-                                onPress={handleTopUpSubmit}
+                                onPress={handleInitiatePayment}
                                 disabled={submitting}
                             >
                                 <LinearGradient
@@ -321,17 +332,92 @@ export const WalletScreen = ({ navigation }: any) => {
                                     {submitting ? (
                                         <ActivityIndicator color="#FFFFFF" />
                                     ) : (
-                                        <Text style={styles.topUpSubmitButtonText}>Authorize Payment</Text>
+                                        <Text style={styles.topUpSubmitButtonText}>Proceed to ClicknPay Checkout</Text>
                                     )}
                                 </LinearGradient>
                             </TouchableOpacity>
 
                             <Text style={styles.clicknpayNotice}>
-                                ClickNPay processing fees apply. Your wallet will be credited with the Net Received amount.
-                              </Text>
+                                ClicknPay secure payment gateway will open to complete the transaction.
+                            </Text>
                         </ScrollView>
                     </BlurView>
                 </View>
+            </Modal>
+
+            {/* ClicknPay Hosted WebView Checkout Modal */}
+            <Modal
+                visible={showPaymentModal}
+                animationType="slide"
+                transparent={false}
+                onRequestClose={() => setShowPaymentModal(false)}
+            >
+                <SafeAreaView style={styles.webViewModalContainer} edges={['top', 'bottom']}>
+                    <View style={styles.webViewHeader}>
+                        <TouchableOpacity 
+                            onPress={() => setShowPaymentModal(false)} 
+                            style={styles.webViewCancelButton}
+                        >
+                            <Text style={styles.webViewCancelText}>Cancel</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.webViewHeaderTitle}>ClicknPay Checkout</Text>
+                        <TouchableOpacity 
+                            onPress={handleVerifyPayment} 
+                            style={styles.webViewVerifyButton}
+                            disabled={verifying}
+                        >
+                            {verifying ? (
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                                <Text style={styles.webViewVerifyText}>I've Paid</Text>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+
+                    {paymentUrl ? (
+                        Platform.OS === 'web' ? (
+                            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+                                <Text style={{ color: '#FFFFFF', fontSize: 16, marginBottom: 20, textAlign: 'center' }}>
+                                    Click below to open the secure ClicknPay payment page:
+                                </Text>
+                                <TouchableOpacity 
+                                    style={[styles.topUpSubmitButton, { width: '80%' }]}
+                                    onPress={() => {
+                                        if (typeof window !== 'undefined') {
+                                            window.open(paymentUrl, '_blank');
+                                        }
+                                    }}
+                                >
+                                    <LinearGradient
+                                        colors={['#055FEE', '#5B99F2']}
+                                        style={styles.topUpSubmitGradient}
+                                    >
+                                        <Text style={styles.topUpSubmitButtonText}>Open ClicknPay in New Tab</Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <WebView
+                                source={{ uri: paymentUrl }}
+                                style={{ flex: 1, backgroundColor: '#FFFFFF' }}
+                                startInLoadingState={true}
+                                renderLoading={() => (
+                                    <View style={styles.webViewLoadingOverlay}>
+                                        <ActivityIndicator size="large" color="#055FEE" />
+                                        <Text style={styles.loadingText}>Loading ClicknPay Gateway...</Text>
+                                    </View>
+                                )}
+                                onNavigationStateChange={(navState) => {
+                                    if (navState.url.toLowerCase().includes('success') || 
+                                        navState.url.toLowerCase().includes('payment-return') ||
+                                        navState.url.toLowerCase().includes('shipmate://')) {
+                                        handleVerifyPayment();
+                                    }
+                                }}
+                            />
+                        )
+                    ) : null}
+                </SafeAreaView>
             </Modal>
 
             {/* Top-up Receipt Success Modal */}
@@ -353,7 +439,7 @@ export const WalletScreen = ({ navigation }: any) => {
                                     <Text style={styles.receiptValue}>${receipt.gross.toFixed(2)}</Text>
                                 </View>
                                 <View style={styles.receiptRow}>
-                                    <Text style={styles.receiptLabel}>ClickNPay Gateway Fee:</Text>
+                                    <Text style={styles.receiptLabel}>ClicknPay Fee:</Text>
                                     <Text style={styles.receiptValue}>-${receipt.fee.toFixed(2)}</Text>
                                 </View>
                                 <View style={[styles.receiptRow, styles.receiptNetRow]}>
@@ -481,7 +567,7 @@ const styles = StyleSheet.create({
         fontSize: 13,
         textAlign: 'center',
         lineHeight: 18,
-        fontWeight: '550',
+        fontWeight: '500',
     },
     topUpButtonContainer: {
         borderRadius: 16,
@@ -566,7 +652,7 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
     txAmountContainer: {
-        alignItems: 'end',
+        alignItems: 'flex-end',
     },
     txAmount: {
         fontSize: 16,
@@ -788,4 +874,56 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
     },
+    // ClicknPay WebView Modal Styles
+    webViewModalContainer: {
+        flex: 1,
+        backgroundColor: '#0F2027',
+    },
+    webViewHeader: {
+        height: 56,
+        backgroundColor: '#1E293B',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.1)',
+    },
+    webViewHeaderTitle: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: '700',
+    },
+    webViewCancelButton: {
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+    },
+    webViewCancelText: {
+        color: '#94A3B8',
+        fontSize: 15,
+        fontWeight: '600',
+    },
+    webViewVerifyButton: {
+        backgroundColor: '#10B981',
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderRadius: 10,
+    },
+    webViewVerifyText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    webViewLoadingOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: '#0F2027',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 10,
+    },
 });
+

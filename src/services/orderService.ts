@@ -92,6 +92,46 @@ export const orderService = {
     },
 
     /**
+     * Complete order with proof of delivery (Signature & Photo)
+     */
+    async completeOrderWithProof(orderId: string, signatureUrl: string, photoUrl: string) {
+        const { data, error } = await supabase
+            .from('orders')
+            .update({ 
+                status: 'delivered',
+                delivery_signature_url: signatureUrl,
+                delivery_photo_url: photoUrl,
+                updated_at: new Date().toISOString() 
+            })
+            .eq('id', orderId)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data as Order;
+    },
+
+    /**
+     * Acknowledge delivery by customer (completing the order lifecycle)
+     */
+    async acknowledgeDelivery(orderId: string) {
+        const { data, error } = await supabase
+            .from('orders')
+            .update({ 
+                status: 'completed',
+                customer_acknowledged: true,
+                acknowledged_at: new Date().toISOString(),
+                updated_at: new Date().toISOString() 
+            })
+            .eq('id', orderId)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data as Order;
+    },
+
+    /**
      * Update driver location for an active order
      */
     async updateDriverLocation(orderId: string, latitude: number, longitude: number) {

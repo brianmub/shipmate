@@ -77,6 +77,7 @@ export type OrderStatus =
     | 'en_route_to_delivery' 
     | 'arrived_at_delivery' 
     | 'delivered' 
+    | 'completed'
     | 'cancelled' 
     | 'failed';
 
@@ -116,6 +117,12 @@ export interface Order {
     
     // Pricing
     estimated_cost: number;
+    
+    // Proof of Delivery & Customer Acknowledgement
+    delivery_signature_url?: string | null;
+    delivery_photo_url?: string | null;
+    customer_acknowledged?: boolean;
+    acknowledged_at?: string | null;
     
     created_at: string;
     updated_at: string;

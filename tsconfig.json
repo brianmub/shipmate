@@ -4,5 +4,5 @@
     "strict": true,
     "moduleSuffixes": [".native", ".web", ""]
   },
-  "exclude": ["node_modules", "mobile", "web-admin", "dist"]
+  "exclude": ["node_modules", "mobile", "web-admin", "dist", "supabase"]
 }

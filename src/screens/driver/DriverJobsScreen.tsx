@@ -6,6 +6,7 @@ import { BlurView } from 'expo-blur';
 import { orderService } from '../../services/orderService';
 import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../utils/supabase';
+import { userService } from '../../services/userService';
 
 export const DriverJobsScreen = ({ navigation }: any) => {
     const { user } = useAuthStore();
@@ -47,8 +48,9 @@ export const DriverJobsScreen = ({ navigation }: any) => {
     }, [expandedJobId, user]);
 
     const checkWalletStatus = async () => {
+        if (!user) return;
         try {
-            const walletData = await userService.getCourierWallet(user?.id);
+            const walletData = await userService.getCourierWallet(user.id);
             if (walletData) {
                 setWalletStatus(walletData.status);
                 setWalletBalance(walletData.balance);

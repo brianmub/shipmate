@@ -4,6 +4,7 @@ import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import Signature from 'react-native-signature-canvas';
 import { verificationService } from '../services/verificationService';
+import { supabase } from '../utils/supabase';
 
 interface ProofOfDeliveryProps {
     visible: boolean;
@@ -40,13 +41,33 @@ export const ProofOfDeliveryModal = ({ visible, onClose, onComplete, orderId }: 
 
         try {
             setLoading(true);
-            // Upload photo
+            // 1. Upload photo
             const photoPath = `orders/${orderId}/proof_photo.jpg`;
             const photoUrl = await verificationService.uploadImage(photo, photoPath);
 
-            // In a real app, you'd also upload the signature base64 as a file
-            // For now we'll pass them back
-            onComplete({ signatureUrl: signature, photoUrl });
+            // 2. Convert base64 signature to a Blob natively
+            const sigResponse = await fetch(signature);
+            const sigBlob = await sigResponse.blob();
+
+            // 3. Upload signature to Supabase Storage
+            const sigPath = `orders/${orderId}/signature.png`;
+            const { error: sigUploadErr } = await supabase.storage
+                .from('verification-docs')
+                .upload(sigPath, sigBlob, {
+                    contentType: 'image/png',
+                    upsert: true
+                });
+
+            if (sigUploadErr) throw sigUploadErr;
+
+            // 4. Get signature public URL
+            const { data: sigUrlData } = supabase.storage
+                .from('verification-docs')
+                .getPublicUrl(sigPath);
+            const signatureUrl = sigUrlData.publicUrl;
+
+            // 5. Complete with both URLs
+            onComplete({ signatureUrl, photoUrl });
         } catch (error: any) {
             Alert.alert('Error', error.message);
         } finally {

@@ -109,7 +109,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
             setLoading(true);
             const { error } = await supabase
                 .from('orders')
-                .update({ status: 'completed' })
+                .update({ status: 'delivered' })
                 .eq('id', activeJob.id);
 
             if (error) throw error;
