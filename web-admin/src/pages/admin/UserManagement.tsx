@@ -15,8 +15,25 @@ import {
   Lock, 
   RefreshCw,
   AlertCircle,
-  Cpu
+  Cpu,
+  MessageSquare,
+  ExternalLink,
+  Award
 } from 'lucide-react';
+
+export interface CourierApplication {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  city: string;
+  vehicle_type: string;
+  has_license: boolean;
+  experience_years: string;
+  notes: string | null;
+  status: 'pending' | 'contacted' | 'approved' | 'rejected';
+  created_at: string;
+}
 
 interface UserProfile {
   id: string;
@@ -92,9 +109,66 @@ export const UserManagement = () => {
   const [newPhone, setNewPhone] = useState('');
   const [newRole, setNewRole] = useState<'customer' | 'driver' | 'admin'>('customer');
 
+  // Courier Applications (Waitlist) State
+  const [activeMainTab, setActiveMainTab] = useState<'users' | 'applicants'>('users');
+  const [courierApplications, setCourierApplications] = useState<CourierApplication[]>([]);
+  const [loadingApplications, setLoadingApplications] = useState(false);
+  const [applicantSearch, setApplicantSearch] = useState('');
+  const [applicantCityFilter, setApplicantCityFilter] = useState('all');
+  const [applicantVehicleFilter, setApplicantVehicleFilter] = useState('all');
+  const [applicantStatusFilter, setApplicantStatusFilter] = useState('all');
+
   useEffect(() => {
     fetchUsers();
+    fetchCourierApplications();
   }, []);
+
+  const fetchCourierApplications = async () => {
+    try {
+      setLoadingApplications(true);
+      const { data, error } = await supabase
+        .from('courier_applications')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('courier_applications query:', error.message);
+      } else {
+        setCourierApplications(data || []);
+      }
+    } catch (err: any) {
+      console.warn('Error fetching courier applications:', err);
+    } finally {
+      setLoadingApplications(false);
+    }
+  };
+
+  const handleUpdateApplicationStatus = async (id: string, newStatus: 'pending' | 'contacted' | 'approved' | 'rejected') => {
+    try {
+      const { error } = await supabase
+        .from('courier_applications')
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) throw error;
+      setCourierApplications(prev => prev.map(app => app.id === id ? { ...app, status: newStatus } : app));
+      setSuccessMessage(`Applicant status updated to: ${newStatus}`);
+      setTimeout(() => setSuccessMessage(''), 3500);
+    } catch (err: any) {
+      alert(`Could not update status: ${err.message}`);
+    }
+  };
+
+  const getWhatsAppUrl = (phone: string, name: string, city: string) => {
+    let clean = phone.replace(/[^0-9]/g, '');
+    if (clean.startsWith('0')) {
+      clean = '263' + clean.slice(1);
+    } else if (!clean.startsWith('263')) {
+      clean = '263' + clean;
+    }
+    const msg = encodeURIComponent(`Hi ${name}! This is ShipMate Dispatch regarding your delivery courier application in ${city}.`);
+    return `https://wa.me/${clean}?text=${msg}`;
+  };
 
   const fetchUsers = async () => {
     try {
@@ -374,7 +448,7 @@ export const UserManagement = () => {
     }
   };
 
-  // Filters logic
+  // Filters logic for Users
   const filteredUsers = users.filter(user => {
     const matchesSearch = 
       (user.full_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -387,6 +461,23 @@ export const UserManagement = () => {
     return matchesSearch && matchesRole && matchesStatus;
   });
 
+  // Filters logic for Courier Applicants (Waitlist)
+  const filteredApplicants = courierApplications.filter((app) => {
+    const query = applicantSearch.toLowerCase();
+    const matchesSearch =
+      query === '' ||
+      (app.full_name || '').toLowerCase().includes(query) ||
+      (app.email || '').toLowerCase().includes(query) ||
+      (app.phone || '').toLowerCase().includes(query) ||
+      (app.city || '').toLowerCase().includes(query);
+
+    const matchesCity = applicantCityFilter === 'all' || app.city.toLowerCase() === applicantCityFilter.toLowerCase();
+    const matchesVehicle = applicantVehicleFilter === 'all' || app.vehicle_type === applicantVehicleFilter;
+    const matchesStatus = applicantStatusFilter === 'all' || app.status === applicantStatusFilter;
+
+    return matchesSearch && matchesCity && matchesVehicle && matchesStatus;
+  });
+
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 p-6 sm:p-8 font-sans">
       <div className="max-w-7xl mx-auto space-y-8">
@@ -394,18 +485,22 @@ export const UserManagement = () => {
         {/* Header Section */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <h1 className="text-3xl font-extrabold text-white tracking-tight">User Management</h1>
+            <h1 className="text-3xl font-extrabold text-white tracking-tight">User & Fleet Management</h1>
             <p className="text-slate-400 text-sm mt-1">
-              Add users, change roles, suspend accounts, and resolve login/password issues.
+              Manage registered accounts, troubleshoot logins, and review new delivery courier applicants from the landing page.
             </p>
           </div>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 bg-brand-blue hover:bg-brand-blue/90 text-white px-5 py-3 rounded-2xl font-bold transition-all shadow-lg shadow-brand-blue/20 cursor-pointer"
-          >
-            <UserPlus className="w-5 h-5" />
-            <span>Create User</span>
-          </button>
+          <div className="flex items-center gap-3">
+            {activeMainTab === 'users' && (
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="flex items-center gap-2 bg-brand-blue hover:bg-brand-blue/90 text-white px-5 py-3 rounded-2xl font-bold transition-all shadow-lg shadow-brand-blue/20 cursor-pointer"
+              >
+                <UserPlus className="w-5 h-5" />
+                <span>Create User</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Toast success indicator */}
@@ -416,232 +511,449 @@ export const UserManagement = () => {
           </div>
         )}
 
-        {/* Filter bar */}
-        <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-[2rem] flex flex-col md:flex-row items-center gap-4">
-          {/* Search Input */}
-          <div className="relative w-full md:flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-            <input
-              type="text"
-              placeholder="Search by name, email or phone..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-slate-950/40 border border-slate-850 rounded-2xl py-3 pl-12 pr-4 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue transition-all text-sm font-semibold"
-            />
-          </div>
-
-          {/* Filters dropdowns */}
-          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-            <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
-              <Filter className="w-4 h-4 text-slate-400" />
-              <select
-                value={roleFilter}
-                onChange={(e) => setRoleFilter(e.target.value)}
-                className="bg-transparent text-slate-350 text-sm font-bold focus:outline-none cursor-pointer"
-              >
-                <option value="all">All Roles</option>
-                <option value="customer">Customers</option>
-                <option value="driver">Drivers</option>
-                <option value="admin">Admins</option>
-              </select>
-            </div>
-
-            <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
-              <Filter className="w-4 h-4 text-slate-400" />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="bg-transparent text-slate-350 text-sm font-bold focus:outline-none cursor-pointer"
-              >
-                <option value="all">All Statuses</option>
-                <option value="active">Active</option>
-                <option value="suspended">Suspended</option>
-              </select>
-            </div>
-
-            <button
-              onClick={fetchUsers}
-              className="p-3 bg-slate-850 border border-slate-800 rounded-2xl text-slate-400 hover:text-white transition-colors cursor-pointer"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          </div>
+        {/* MAIN TAB SWITCHER */}
+        <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+          <button
+            onClick={() => setActiveMainTab('users')}
+            className={`px-5 py-2.5 rounded-2xl font-bold text-sm transition-all cursor-pointer ${
+              activeMainTab === 'users'
+                ? 'bg-brand-blue text-white shadow-lg shadow-brand-blue/20'
+                : 'bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            Registered Users ({users.length})
+          </button>
+          <button
+            onClick={() => setActiveMainTab('applicants')}
+            className={`px-5 py-2.5 rounded-2xl font-bold text-sm transition-all cursor-pointer flex items-center gap-2 ${
+              activeMainTab === 'applicants'
+                ? 'bg-[#F2A33D] text-slate-950 font-black shadow-lg shadow-[#F2A33D]/20'
+                : 'bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Award className="w-4 h-4" />
+            <span>Courier Applicants / Waitlist</span>
+            {courierApplications.length > 0 && (
+              <span className="bg-slate-900/30 text-xs px-2 py-0.5 rounded-full font-bold">
+                {courierApplications.length}
+              </span>
+            )}
+          </button>
         </div>
 
-        {/* Users Table */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-20">
-            <Loader2 className="w-12 h-12 text-brand-blue animate-spin mb-4" />
-            <p className="text-slate-400 font-semibold">Loading users list...</p>
-          </div>
-        ) : filteredUsers.length === 0 ? (
-          <div className="bg-slate-850/20 border border-slate-850 rounded-[2.5rem] py-16 text-center text-slate-450 font-semibold">
-            No users matched the criteria.
-          </div>
-        ) : (
-          <div className="bg-slate-950/20 border border-slate-850 rounded-[2.5rem] overflow-hidden shadow-xl">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-850/50 border-b border-slate-850 text-xs font-bold uppercase tracking-wider text-slate-400">
-                    <th className="py-5 px-6">User Info</th>
-                    <th className="py-5 px-6">Role</th>
-                    <th className="py-5 px-6">Support & Login Issues</th>
-                    <th className="py-5 px-6">Stats / Balance</th>
-                    <th className="py-5 px-6 text-right">Account Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-850">
-                  {filteredUsers.map((user) => (
-                    <tr key={user.id} className="hover:bg-slate-850/10 transition-colors text-sm">
-                      {/* Name & Contact */}
-                      <td className="py-5 px-6 space-y-1">
-                        <p className="font-extrabold text-white">{user.full_name || 'No Name'}</p>
-                        <div className="flex flex-col gap-1 text-xs text-slate-450">
-                          <span className="flex items-center gap-1.5">
-                            <Mail className="w-3.5 h-3.5" />
-                            {user.email}
-                          </span>
-                          {user.phone && (
-                            <span className="flex items-center gap-1.5">
-                              <Phone className="w-3.5 h-3.5" />
-                              {user.phone}
-                            </span>
-                          )}
-                        </div>
-                      </td>
+        {/* ========================================================= */}
+        {/* TAB 1: REGISTERED USERS VIEW */}
+        {/* ========================================================= */}
+        {activeMainTab === 'users' ? (
+          <>
+            {/* Filter bar */}
+            <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-[2rem] flex flex-col md:flex-row items-center gap-4">
+              {/* Search Input */}
+              <div className="relative w-full md:flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Search by name, email or phone..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full bg-slate-950/40 border border-slate-850 rounded-2xl py-3 pl-12 pr-4 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue transition-all text-sm font-semibold"
+                />
+              </div>
 
-                      {/* Role drop-down */}
-                      <td className="py-5 px-6">
-                        <select
-                          value={user.role}
-                          onChange={(e) => handleChangeRole(user, e.target.value as any)}
-                          className="bg-slate-900 border border-slate-800 text-slate-200 text-xs font-bold rounded-xl px-2.5 py-1.5 focus:outline-none cursor-pointer"
-                        >
-                          <option value="customer">Customer</option>
-                          <option value="driver">Driver</option>
-                          <option value="admin">Admin</option>
-                        </select>
-                      </td>
+              {/* Filters dropdowns */}
+              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
+                  <Filter className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={roleFilter}
+                    onChange={(e) => setRoleFilter(e.target.value)}
+                    className="bg-transparent text-slate-350 text-sm font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">All Roles</option>
+                    <option value="customer">Customers</option>
+                    <option value="driver">Drivers</option>
+                    <option value="admin">Admins</option>
+                  </select>
+                </div>
 
-                      {/* Login Troubleshooting (Verify Email/Phone & Forgot Password Reset) */}
-                      <td className="py-5 px-6 space-y-3">
-                        {/* Verification controls */}
-                        <div className="flex items-center gap-3">
-                          {/* Email verified status */}
-                          <button
-                            onClick={() => handleToggleVerification(user, 'email_verified')}
-                            className={`flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg border transition-all cursor-pointer ${
-                              user.email_verified 
-                                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
-                                : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
-                            }`}
-                            title="Click to toggle email verification state"
-                          >
-                            <span>Email:</span>
-                            {user.email_verified ? 'Verified' : 'Unverified'}
-                          </button>
+                <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
+                  <Filter className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="bg-transparent text-slate-350 text-sm font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">All Statuses</option>
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                  </select>
+                </div>
 
-                          {/* Phone verified status */}
-                          {user.phone && (
-                            <button
-                              onClick={() => handleToggleVerification(user, 'phone_verified')}
-                              className={`flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg border transition-all cursor-pointer ${
-                                user.phone_verified 
-                                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
-                                  : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
-                              }`}
-                              title="Click to toggle phone verification state"
+                <button
+                  onClick={fetchUsers}
+                  className="p-3 bg-slate-850 border border-slate-800 rounded-2xl text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  title="Refresh Users"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Users Table */}
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-20">
+                <Loader2 className="w-12 h-12 text-brand-blue animate-spin mb-4" />
+                <p className="text-slate-400 font-semibold">Loading users list...</p>
+              </div>
+            ) : filteredUsers.length === 0 ? (
+              <div className="bg-slate-850/20 border border-slate-850 rounded-[2.5rem] py-16 text-center text-slate-450 font-semibold">
+                No users matched the criteria.
+              </div>
+            ) : (
+              <div className="bg-slate-950/20 border border-slate-850 rounded-[2.5rem] overflow-hidden shadow-xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-850/50 border-b border-slate-850 text-xs font-bold uppercase tracking-wider text-slate-400">
+                        <th className="py-5 px-6">User Info</th>
+                        <th className="py-5 px-6">Role</th>
+                        <th className="py-5 px-6">Support & Login Issues</th>
+                        <th className="py-5 px-6">Stats / Balance</th>
+                        <th className="py-5 px-6 text-right">Account Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850">
+                      {filteredUsers.map((user) => (
+                        <tr key={user.id} className="hover:bg-slate-850/10 transition-colors text-sm">
+                          {/* Name & Contact */}
+                          <td className="py-5 px-6 space-y-1">
+                            <p className="font-extrabold text-white">{user.full_name || 'No Name'}</p>
+                            <div className="flex flex-col gap-1 text-xs text-slate-450">
+                              <span className="flex items-center gap-1.5">
+                                <Mail className="w-3.5 h-3.5" />
+                                {user.email}
+                              </span>
+                              {user.phone && (
+                                <span className="flex items-center gap-1.5">
+                                  <Phone className="w-3.5 h-3.5" />
+                                  {user.phone}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Role drop-down */}
+                          <td className="py-5 px-6">
+                            <select
+                              value={user.role}
+                              onChange={(e) => handleChangeRole(user, e.target.value as any)}
+                              className="bg-slate-900 border border-slate-800 text-slate-200 text-xs font-bold rounded-xl px-2.5 py-1.5 focus:outline-none cursor-pointer"
                             >
-                              <span>Phone:</span>
-                              {user.phone_verified ? 'Verified' : 'Unverified'}
-                            </button>
-                          )}
-                        </div>
+                              <option value="customer">Customer</option>
+                              <option value="driver">Driver</option>
+                              <option value="admin">Admin</option>
+                            </select>
+                          </td>
 
-                        {/* Automated Password Reset */}
-                        <button
-                          onClick={() => handleResetPassword(user.email)}
-                          className="flex items-center gap-1.5 text-xs font-bold text-brand-blue hover:text-white transition-colors cursor-pointer bg-brand-blue/5 border border-brand-blue/15 px-3 py-1.5 rounded-xl"
-                        >
-                          <Lock className="w-3.5 h-3.5" />
-                          Send Password Reset
-                        </button>
-                      </td>
+                          {/* Login Troubleshooting */}
+                          <td className="py-5 px-6 space-y-3">
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => handleToggleVerification(user, 'email_verified')}
+                                className={`flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg border transition-all cursor-pointer ${
+                                  user.email_verified 
+                                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                                    : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
+                                }`}
+                                title="Click to toggle email verification state"
+                              >
+                                <span>Email:</span>
+                                {user.email_verified ? 'Verified' : 'Unverified'}
+                              </button>
 
-                      {/* Join stats/Balances */}
-                      <td className="py-5 px-6 text-xs space-y-1">
-                        {user.role === 'driver' && (
-                          <div className="space-y-1 font-medium text-slate-350">
-                            <p>Status: <span className="font-bold text-white uppercase tracking-wider text-[10px]">{user.drivers?.verification_status || 'Pending'}</span></p>
-                            <p>Deliveries: <span className="font-bold text-white">{user.drivers?.total_deliveries || 0}</span></p>
-                            <p>Wallet Balance: <span className="font-extrabold text-emerald-400">${user.courier_wallets?.balance !== undefined ? user.courier_wallets.balance.toFixed(2) : '0.00'}</span></p>
-                            <p>Wallet Status: <span className={`font-bold ${user.courier_wallets?.status === 'locked' ? 'text-rose-450' : 'text-emerald-400'} uppercase tracking-wider text-[10px]`}>{user.courier_wallets?.status || 'Active'}</span></p>
-                            <p>Rating: <span className="font-bold text-white">{user.drivers?.average_rating || 'N/A'} ⭐</span></p>
-                            
-                            <div className="flex flex-wrap gap-1.5 pt-2">
-                              {user.driver_applications && (
+                              {user.phone && (
                                 <button
-                                  onClick={() => {
-                                    setSelectedUser(user);
-                                    setShowDetailsModal(true);
-                                  }}
-                                  className="flex items-center gap-1 text-[9px] font-extrabold text-emerald-400 hover:text-white transition-colors bg-emerald-500/10 border border-emerald-500/15 px-2 py-1 rounded-lg cursor-pointer"
+                                  onClick={() => handleToggleVerification(user, 'phone_verified')}
+                                  className={`flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg border transition-all cursor-pointer ${
+                                    user.phone_verified 
+                                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                                      : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
+                                  }`}
+                                  title="Click to toggle phone verification state"
                                 >
-                                  <Cpu className="w-3 h-3" />
-                                  AI Screen
+                                  <span>Phone:</span>
+                                  {user.phone_verified ? 'Verified' : 'Unverified'}
                                 </button>
                               )}
-                              <button
-                                onClick={() => handleOpenLedgerModal(user)}
-                                className="flex items-center gap-1 text-[9px] font-extrabold text-brand-blue hover:text-white transition-colors bg-brand-blue/10 border border-brand-blue/15 px-2 py-1 rounded-lg cursor-pointer"
-                              >
-                                Ledger
-                              </button>
-                              <button
-                                onClick={() => handleOpenTopUpModal(user)}
-                                className="flex items-center gap-1 text-[9px] font-extrabold text-amber-400 hover:text-white transition-colors bg-amber-500/10 border border-amber-500/15 px-2 py-1 rounded-lg cursor-pointer"
-                              >
-                                Top Up
-                              </button>
                             </div>
-                          </div>
-                        )}
 
-                        {user.role === 'customer' && (
-                          <div className="space-y-0.5 font-medium text-slate-350">
-                            <p>Total Orders: <span className="font-bold text-white">{user.customers?.total_orders || 0}</span></p>
-                            <p>Spend: <span className="font-extrabold text-brand-blue">${user.customers?.lifetime_spend || 0}</span></p>
-                          </div>
-                        )}
+                            <button
+                              onClick={() => handleResetPassword(user.email)}
+                              className="flex items-center gap-1.5 text-xs font-bold text-brand-blue hover:text-white transition-colors cursor-pointer bg-brand-blue/5 border border-brand-blue/15 px-3 py-1.5 rounded-xl"
+                            >
+                              <Lock className="w-3.5 h-3.5" />
+                              Send Password Reset
+                            </button>
+                          </td>
 
-                        {user.role === 'admin' && (
-                          <div className="text-slate-500 font-bold uppercase tracking-wider text-[10px] flex items-center gap-1">
-                            <ShieldCheck className="w-4 h-4 text-brand-blue" />
-                            Admin Account
-                          </div>
-                        )}
-                      </td>
+                          {/* Join stats / Balances */}
+                          <td className="py-5 px-6 text-xs space-y-1">
+                            {user.role === 'driver' && (
+                              <div className="space-y-1 font-medium text-slate-350">
+                                <p>Status: <span className="font-bold text-white uppercase tracking-wider text-[10px]">{user.drivers?.verification_status || 'Pending'}</span></p>
+                                <p>Deliveries: <span className="font-bold text-white">{user.drivers?.total_deliveries || 0}</span></p>
+                                <p>Wallet Balance: <span className="font-extrabold text-emerald-400">${user.courier_wallets?.balance !== undefined ? user.courier_wallets.balance.toFixed(2) : '0.00'}</span></p>
+                                <p>Wallet Status: <span className={`font-bold ${user.courier_wallets?.status === 'locked' ? 'text-rose-450' : 'text-emerald-400'} uppercase tracking-wider text-[10px]`}>{user.courier_wallets?.status || 'Active'}</span></p>
+                                <p>Rating: <span className="font-bold text-white">{user.drivers?.average_rating || 'N/A'} ⭐</span></p>
+                              </div>
+                            )}
 
-                      {/* Toggle status (Lock / Unlock) */}
-                      <td className="py-5 px-6 text-right">
-                        <button
-                          onClick={() => handleToggleStatus(user)}
-                          className={`px-4 py-2 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
-                            user.account_status === 'active'
-                              ? 'bg-rose-500/10 border-rose-500/20 text-rose-450 hover:bg-rose-500 hover:text-white'
-                              : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white'
-                          }`}
-                        >
-                          {user.account_status === 'active' ? 'Suspend Account' : 'Unlock Account'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                            {user.role === 'customer' && (
+                              <div className="space-y-0.5 font-medium text-slate-350">
+                                <p>Total Orders: <span className="font-bold text-white">{user.customers?.total_orders || 0}</span></p>
+                                <p>Spend: <span className="font-extrabold text-brand-blue">${user.customers?.lifetime_spend || 0}</span></p>
+                              </div>
+                            )}
+
+                            {user.role === 'admin' && (
+                              <div className="text-slate-500 font-bold uppercase tracking-wider text-[10px] flex items-center gap-1">
+                                <ShieldCheck className="w-4 h-4 text-brand-blue" />
+                                Admin Account
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Toggle status (Lock / Unlock) */}
+                          <td className="py-5 px-6 text-right">
+                            <button
+                              onClick={() => handleToggleStatus(user)}
+                              className={`px-4 py-2 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
+                                user.account_status === 'active'
+                                  ? 'bg-rose-500/10 border-rose-500/20 text-rose-450 hover:bg-rose-500 hover:text-white'
+                                  : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white'
+                              }`}
+                            >
+                              {user.account_status === 'active' ? 'Suspend Account' : 'Unlock Account'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          /* ========================================================= */
+          /* TAB 2: COURIER APPLICANTS & WAITLIST VIEW */
+          /* ========================================================= */
+          <>
+            {/* Quick KPI Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-3xl">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Applicants</p>
+                <p className="text-2xl font-black text-white mt-1">{courierApplications.length}</p>
+              </div>
+              <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-3xl">
+                <p className="text-xs font-bold text-amber-400 uppercase tracking-wider">Pending Review</p>
+                <p className="text-2xl font-black text-amber-400 mt-1">
+                  {courierApplications.filter(a => a.status === 'pending').length}
+                </p>
+              </div>
+              <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-3xl">
+                <p className="text-xs font-bold text-sky-400 uppercase tracking-wider">Harare Fleet</p>
+                <p className="text-2xl font-black text-sky-400 mt-1">
+                  {courierApplications.filter(a => a.city.toLowerCase() === 'harare').length}
+                </p>
+              </div>
+              <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-3xl">
+                <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Motorcycles 🏍️</p>
+                <p className="text-2xl font-black text-emerald-400 mt-1">
+                  {courierApplications.filter(a => a.vehicle_type === 'motorcycle').length}
+                </p>
+              </div>
             </div>
-          </div>
+
+            {/* Applicant Filter Bar */}
+            <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-[2rem] flex flex-col md:flex-row items-center gap-4">
+              <div className="relative w-full md:flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Search applicants by name, email, phone or city..."
+                  value={applicantSearch}
+                  onChange={(e) => setApplicantSearch(e.target.value)}
+                  className="w-full bg-slate-950/40 border border-slate-850 rounded-2xl py-3 pl-12 pr-4 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#F2A33D]/30 transition-all text-sm font-semibold"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                {/* City Filter */}
+                <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
+                  <Filter className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={applicantCityFilter}
+                    onChange={(e) => setApplicantCityFilter(e.target.value)}
+                    className="bg-transparent text-slate-350 text-sm font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">All Cities</option>
+                    <option value="Harare">Harare</option>
+                    <option value="Bulawayo">Bulawayo</option>
+                    <option value="Chitungwiza">Chitungwiza</option>
+                    <option value="Mutare">Mutare</option>
+                    <option value="Gweru">Gweru</option>
+                  </select>
+                </div>
+
+                {/* Vehicle Filter */}
+                <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
+                  <Filter className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={applicantVehicleFilter}
+                    onChange={(e) => setApplicantVehicleFilter(e.target.value)}
+                    className="bg-transparent text-slate-350 text-sm font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">All Vehicles</option>
+                    <option value="motorcycle">Motorcycle 🏍️</option>
+                    <option value="sedan">Car 🚗</option>
+                    <option value="bakkie">Bakkie 🛻</option>
+                    <option value="van">Van 🚐</option>
+                    <option value="bicycle">Bicycle 🚴</option>
+                  </select>
+                </div>
+
+                {/* Status Filter */}
+                <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
+                  <Filter className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={applicantStatusFilter}
+                    onChange={(e) => setApplicantStatusFilter(e.target.value)}
+                    className="bg-transparent text-slate-350 text-sm font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">All Statuses</option>
+                    <option value="pending">Pending</option>
+                    <option value="contacted">Contacted</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={fetchCourierApplications}
+                  className="p-3 bg-slate-850 border border-slate-800 rounded-2xl text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  title="Refresh Applicants"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Applicants Table */}
+            {loadingApplications ? (
+              <div className="flex flex-col items-center justify-center py-20">
+                <Loader2 className="w-12 h-12 text-[#F2A33D] animate-spin mb-4" />
+                <p className="text-slate-400 font-semibold">Loading courier applicants...</p>
+              </div>
+            ) : filteredApplicants.length === 0 ? (
+              <div className="bg-slate-850/20 border border-slate-850 rounded-[2.5rem] py-16 text-center text-slate-450 font-semibold">
+                No courier applicants matched the criteria.
+              </div>
+            ) : (
+              <div className="bg-slate-950/20 border border-slate-850 rounded-[2.5rem] overflow-hidden shadow-xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-850/50 border-b border-slate-850 text-xs font-bold uppercase tracking-wider text-slate-400">
+                        <th className="py-5 px-6">Applicant & City</th>
+                        <th className="py-5 px-6">Direct Contact & WhatsApp</th>
+                        <th className="py-5 px-6">Vehicle & License</th>
+                        <th className="py-5 px-6">Experience & Date</th>
+                        <th className="py-5 px-6 text-right">Dispatch Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850">
+                      {filteredApplicants.map((app) => (
+                        <tr key={app.id} className="hover:bg-slate-850/10 transition-colors text-sm">
+                          {/* Name & City */}
+                          <td className="py-5 px-6 space-y-1">
+                            <p className="font-extrabold text-white text-base">{app.full_name}</p>
+                            <span className="inline-block bg-slate-800 text-slate-300 text-xs font-bold px-2.5 py-0.5 rounded-md">
+                              📍 {app.city}
+                            </span>
+                          </td>
+
+                          {/* Contact & WhatsApp */}
+                          <td className="py-5 px-6 space-y-2">
+                            <div className="text-xs text-slate-350 space-y-0.5">
+                              <p className="font-mono text-slate-200">{app.phone}</p>
+                              <p className="text-slate-400">{app.email}</p>
+                            </div>
+                            <a
+                              href={getWhatsAppUrl(app.phone, app.full_name, app.city)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 border border-[#25D366]/30 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              <span>WhatsApp Candidate</span>
+                            </a>
+                          </td>
+
+                          {/* Vehicle & License */}
+                          <td className="py-5 px-6 space-y-1 text-xs">
+                            <div className="font-bold text-white uppercase flex items-center gap-1">
+                              <span>
+                                {app.vehicle_type === 'motorcycle' && '🏍️'}
+                                {app.vehicle_type === 'sedan' && '🚗'}
+                                {app.vehicle_type === 'bakkie' && '🛻'}
+                                {app.vehicle_type === 'van' && '🚐'}
+                                {app.vehicle_type === 'bicycle' && '🚴'}
+                              </span>
+                              <span>{app.vehicle_type}</span>
+                            </div>
+                            <p className={app.has_license ? 'text-emerald-400 font-semibold' : 'text-slate-500 font-semibold'}>
+                              {app.has_license ? '✓ Valid License' : '✗ No License'}
+                            </p>
+                          </td>
+
+                          {/* Experience & Date */}
+                          <td className="py-5 px-6 text-xs text-slate-450 space-y-1">
+                            <p className="font-medium text-slate-300">{app.experience_years}</p>
+                            <p className="text-[11px] text-slate-500">
+                              Applied: {new Date(app.created_at).toLocaleDateString()}
+                            </p>
+                          </td>
+
+                          {/* Dispatch Status */}
+                          <td className="py-5 px-6 text-right">
+                            <select
+                              value={app.status}
+                              onChange={(e) => handleUpdateApplicationStatus(app.id, e.target.value as any)}
+                              className={`text-xs font-extrabold rounded-xl px-3 py-2 border focus:outline-none cursor-pointer ${
+                                app.status === 'pending'
+                                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                                  : app.status === 'contacted'
+                                  ? 'bg-sky-500/10 border-sky-500/30 text-sky-400'
+                                  : app.status === 'approved'
+                                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                                  : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                              }`}
+                            >
+                              <option value="pending" className="bg-slate-900 text-amber-400">⏳ Pending</option>
+                              <option value="contacted" className="bg-slate-900 text-sky-400">💬 Contacted</option>
+                              <option value="approved" className="bg-slate-900 text-emerald-400">✓ Approved</option>
+                              <option value="rejected" className="bg-slate-900 text-rose-400">✗ Rejected</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
