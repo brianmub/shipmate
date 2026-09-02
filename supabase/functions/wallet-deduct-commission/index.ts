@@ -85,6 +85,22 @@ serve(async (req: any) => {
 
         console.log(`Commission deducted successfully. Old Balance: $${oldBalance}, New Balance: $${newBalance}, Status: ${newStatus}`)
 
+        // If order had a promotional voucher discount, reimburse the driver's float atomically
+        const promoSubsidy = parseFloat(newRecord.discount_amount || '0')
+        if (promoSubsidy > 0) {
+            console.log(`Crediting platform promo subsidy of $${promoSubsidy} to driver ${courierId} on job ${jobId}`)
+            const { error: subsidyError } = await supabaseClient.rpc('credit_promo_subsidy_rpc', {
+                p_courier_id: courierId,
+                p_amount: promoSubsidy,
+                p_job_id: jobId
+            })
+            if (subsidyError) {
+                console.warn(`Failed to credit promo subsidy: ${subsidyError.message}`)
+            } else {
+                console.log(`Promo subsidy of $${promoSubsidy} credited successfully. Driver 100% reimbursed.`)
+            }
+        }
+
         // BUSINESS RULE: Warning threshold at <= $3.00, once per crossing only
         if (oldBalance > 3.00 && newBalance <= 3.00) {
             console.log(`Low balance threshold crossed for courier ${courierId}. Triggering notification...`)

@@ -9,6 +9,7 @@ import { orderService } from '../../services/orderService';
 import * as ImagePicker from 'expo-image-picker';
 import { aiService } from '../../services/aiService';
 import { userService } from '../../services/userService';
+import { supabase } from '../../utils/supabase';
 
 export const CreateOrderScreen = ({ route, navigation }: any) => {
     const { 
@@ -32,6 +33,101 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
     const [estimatedCost, setEstimatedCost] = useState(12.50);
     const [pricingSettings, setPricingSettings] = useState<{ base_delivery_fee: number; per_km_rate: number } | null>(null);
     const [bidPrice, setBidPrice] = useState<string>('12.50');
+
+    // Voucher & Promo States
+    const [promoCodeInput, setPromoCodeInput] = useState('');
+    const [appliedVoucher, setAppliedVoucher] = useState<{
+        code: string;
+        discount: number;
+        description: string;
+    } | null>(null);
+    const [validatingPromo, setValidatingPromo] = useState(false);
+    const [promoMessage, setPromoMessage] = useState<{ text: string; isError: boolean } | null>(null);
+
+    const handleApplyPromo = async () => {
+        const cleanCode = promoCodeInput.trim().toUpperCase();
+        if (!cleanCode) {
+            setPromoMessage({ text: 'Please enter a promo code', isError: true });
+            return;
+        }
+
+        const currentFare = parseFloat(bidPrice) || estimatedCost;
+        setValidatingPromo(true);
+        setPromoMessage(null);
+
+        try {
+            // 1. Query vouchers table for active voucher
+            const { data: voucher, error } = await supabase
+                .from('vouchers')
+                .select('*')
+                .eq('code', cleanCode)
+                .eq('is_active', true)
+                .single();
+
+            if (error || !voucher) {
+                // Fallback client check for default WELCOME263
+                if (cleanCode === 'WELCOME263') {
+                    if (currentFare < 4.00) {
+                        setPromoMessage({ text: 'Requires minimum order of $4.00', isError: true });
+                        return;
+                    }
+                    setAppliedVoucher({
+                        code: 'WELCOME263',
+                        discount: 2.00,
+                        description: '$2.00 OFF Welcome Voucher'
+                    });
+                    setPromoMessage({ text: '✓ $2.00 Welcome Voucher applied!', isError: false });
+                    return;
+                }
+                setPromoMessage({ text: 'Invalid or expired promo code', isError: true });
+                return;
+            }
+
+            // 2. Validate minimum order amount
+            const minAmount = parseFloat(voucher.min_order_amount || '4.00');
+            if (currentFare < minAmount) {
+                setPromoMessage({ text: `Requires minimum order of $${minAmount.toFixed(2)}`, isError: true });
+                return;
+            }
+
+            // 3. Check if user already redeemed this voucher
+            if (user) {
+                const { data: redemption } = await supabase
+                    .from('voucher_redemptions')
+                    .select('id')
+                    .eq('voucher_id', voucher.id)
+                    .eq('user_id', user.id)
+                    .single();
+
+                if (redemption) {
+                    setPromoMessage({ text: 'You have already redeemed this voucher', isError: true });
+                    return;
+                }
+            }
+
+            const discountVal = voucher.discount_type === 'percentage'
+                ? Math.round((currentFare * (parseFloat(voucher.discount_value) / 100)) * 100) / 100
+                : parseFloat(voucher.discount_value);
+
+            setAppliedVoucher({
+                code: voucher.code,
+                discount: discountVal,
+                description: voucher.description || `$${discountVal.toFixed(2)} OFF`
+            });
+            setPromoMessage({ text: `✓ ${voucher.code} applied! (-$${discountVal.toFixed(2)})`, isError: false });
+        } catch (err: any) {
+            console.error('Error validating promo code:', err);
+            setPromoMessage({ text: 'Could not validate promo code', isError: true });
+        } finally {
+            setValidatingPromo(false);
+        }
+    };
+
+    const handleRemovePromo = () => {
+        setAppliedVoucher(null);
+        setPromoCodeInput('');
+        setPromoMessage(null);
+    };
 
     // Sync custom bid with estimated cost updates
     useEffect(() => {
@@ -227,6 +323,10 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
         try {
             if (!user) throw new Error("No user session found");
 
+            const grossAmount = offerAmount;
+            const discountAmount = appliedVoucher ? Math.min(appliedVoucher.discount, grossAmount) : 0;
+            const finalPayable = Math.max(0.50, Math.round((grossAmount - discountAmount) * 100) / 100);
+
             const createdOrder = await orderService.createOrder({
                 customer_id: user.id,
                 service_type: serviceType,
@@ -242,10 +342,38 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                 package_description: isDelivery ? packageDescription : null,
                 package_image_url: packageImage,
                 ai_size_estimate: aiEstimate,
-                estimated_cost: offerAmount
+                estimated_cost: finalPayable,
+                gross_amount: grossAmount,
+                discount_amount: discountAmount,
+                promo_code: appliedVoucher?.code || null
             });
 
+            // Record voucher redemption in background
+            if (appliedVoucher && discountAmount > 0) {
+                try {
+                    const { data: vRecord } = await supabase
+                        .from('vouchers')
+                        .select('id')
+                        .eq('code', appliedVoucher.code)
+                        .single();
+
+                    if (vRecord) {
+                        await supabase.from('voucher_redemptions').insert([{
+                            voucher_id: vRecord.id,
+                            user_id: user.id,
+                            order_id: createdOrder.id,
+                            discount_applied: discountAmount
+                        }]);
+                    }
+                } catch (vErr) {
+                    console.warn('Non-blocking: could not record voucher redemption:', vErr);
+                }
+            }
+
             resetOrder();
+            setAppliedVoucher(null);
+            setPromoCodeInput('');
+            setPromoMessage(null);
             setEstimatedCost(pricingSettings?.base_delivery_fee ?? 5.00);
             setBidPrice((pricingSettings?.base_delivery_fee ?? 5.00).toFixed(2));
             
@@ -458,6 +586,53 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                         </BlurView>
 
                         <View style={styles.summarySection}>
+                            {/* Promo Code Input Section */}
+                            <View style={styles.promoSection}>
+                                <Text style={styles.promoTitle}>🎁 Have a Promo Code?</Text>
+                                <View style={styles.promoRow}>
+                                    <TextInput
+                                        style={styles.promoInput}
+                                        value={promoCodeInput}
+                                        onChangeText={(text) => {
+                                            setPromoCodeInput(text.toUpperCase());
+                                            setPromoMessage(null);
+                                        }}
+                                        placeholder="e.g. WELCOME263"
+                                        placeholderTextColor="#94A3B8"
+                                        autoCapitalize="characters"
+                                        editable={!appliedVoucher}
+                                    />
+                                    {appliedVoucher ? (
+                                        <TouchableOpacity 
+                                            style={styles.promoRemoveBtn} 
+                                            onPress={handleRemovePromo}
+                                        >
+                                            <Text style={styles.promoRemoveBtnText}>Remove</Text>
+                                        </TouchableOpacity>
+                                    ) : (
+                                        <TouchableOpacity 
+                                            style={styles.promoApplyBtn} 
+                                            onPress={handleApplyPromo}
+                                            disabled={validatingPromo}
+                                        >
+                                            {validatingPromo ? (
+                                                <ActivityIndicator size="small" color="#FFFFFF" />
+                                            ) : (
+                                                <Text style={styles.promoApplyBtnText}>Apply</Text>
+                                            )}
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+
+                                {promoMessage && (
+                                    <Text style={[styles.promoMessageText, promoMessage.isError ? styles.promoErrorText : styles.promoSuccessText]}>
+                                        {promoMessage.text}
+                                    </Text>
+                                )}
+                            </View>
+
+                            <View style={styles.bidDivider} />
+
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Estimated Cost:</Text>
                                 <Text style={styles.summaryTitle}>${estimatedCost.toFixed(2)}</Text>
@@ -494,7 +669,34 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                 </View>
                             </View>
 
+                            {appliedVoucher && (
+                                <>
+                                    <View style={styles.bidDivider} />
+                                    <View style={styles.summaryRow}>
+                                        <Text style={styles.summaryLabel}>Subtotal Fare:</Text>
+                                        <Text style={styles.summaryText}>${(parseFloat(bidPrice) || estimatedCost).toFixed(2)}</Text>
+                                    </View>
+                                    <View style={styles.summaryRow}>
+                                        <Text style={[styles.summaryLabel, { color: '#10B981', fontWeight: '700' }]}>
+                                            Voucher ({appliedVoucher.code}):
+                                        </Text>
+                                        <Text style={[styles.summaryText, { color: '#10B981', fontWeight: '800' }]}>
+                                            -${appliedVoucher.discount.toFixed(2)}
+                                        </Text>
+                                    </View>
+                                </>
+                            )}
+
                             <View style={styles.bidDivider} />
+
+                            <View style={styles.summaryRow}>
+                                <Text style={styles.summaryLabel}>Total to Pay:</Text>
+                                <Text style={[styles.summaryTitle, { color: appliedVoucher ? '#10B981' : '#055FEE' }]}>
+                                    ${appliedVoucher 
+                                        ? Math.max(0.50, ((parseFloat(bidPrice) || estimatedCost) - appliedVoucher.discount)).toFixed(2)
+                                        : (parseFloat(bidPrice) || estimatedCost).toFixed(2)}
+                                </Text>
+                            </View>
 
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Payment Method:</Text>
@@ -886,5 +1088,71 @@ const styles = StyleSheet.create({
         height: 1,
         backgroundColor: 'rgba(0,0,0,0.05)',
         marginVertical: 16,
+    },
+    promoSection: {
+        marginBottom: 16,
+    },
+    promoTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#334155',
+        marginBottom: 8,
+        marginLeft: 2,
+    },
+    promoRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    promoInput: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#0F172A',
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.08)',
+        letterSpacing: 1,
+    },
+    promoApplyBtn: {
+        backgroundColor: '#055FEE',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    promoApplyBtnText: {
+        color: '#FFFFFF',
+        fontWeight: '700',
+        fontSize: 13,
+    },
+    promoRemoveBtn: {
+        backgroundColor: '#FEE2E2',
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    promoRemoveBtnText: {
+        color: '#EF4444',
+        fontWeight: '700',
+        fontSize: 12,
+    },
+    promoMessageText: {
+        fontSize: 12,
+        fontWeight: '600',
+        marginTop: 6,
+        marginLeft: 4,
+    },
+    promoErrorText: {
+        color: '#EF4444',
+    },
+    promoSuccessText: {
+        color: '#10B981',
     },
 });

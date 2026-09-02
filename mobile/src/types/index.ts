@@ -115,8 +115,11 @@ export interface Order {
     package_image_url?: string | null;
     ai_size_estimate?: string | null;
     
-    // Pricing
+    // Pricing & Discounts
     estimated_cost: number;
+    gross_amount?: number | null;
+    discount_amount?: number | null;
+    promo_code?: string | null;
     
     // Proof of Delivery & Customer Acknowledgement
     delivery_signature_url?: string | null;

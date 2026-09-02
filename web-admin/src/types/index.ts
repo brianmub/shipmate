@@ -112,8 +112,11 @@ export interface Order {
     package_weight: string | null;
     package_dimensions: string | null;
     
-    // Pricing
+    // Pricing & Discounts
     estimated_cost: number;
+    gross_amount?: number | null;
+    discount_amount?: number | null;
+    promo_code?: string | null;
     
     created_at: string;
     updated_at: string;

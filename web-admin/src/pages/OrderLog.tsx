@@ -160,6 +160,11 @@ export const OrderLog = () => {
                                 </td>
                                 <td className="px-6 py-5">
                                     <p className="text-emerald-400 font-bold font-mono">${order.estimated_cost?.toFixed(2)}</p>
+                                    {order.discount_amount && order.discount_amount > 0 ? (
+                                        <span className="text-[10px] bg-amber-500/10 text-amber-400 font-mono px-1.5 py-0.5 rounded inline-block mt-0.5">
+                                            🎁 -${order.discount_amount.toFixed(2)} ({order.promo_code || 'Promo'})
+                                        </span>
+                                    ) : null}
                                 </td>
                                 <td className="px-6 py-5 text-right">
                                     <button 
@@ -229,6 +234,11 @@ export const OrderLog = () => {
                                     <div>
                                         <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Estimated Cost</p>
                                         <p className="text-xl font-bold text-emerald-400 font-mono">${selectedOrder.estimated_cost?.toFixed(2)}</p>
+                                        {selectedOrder.discount_amount && selectedOrder.discount_amount > 0 ? (
+                                            <p className="text-xs text-amber-400 font-semibold mt-1">
+                                                🎁 Promo Discount: -${selectedOrder.discount_amount.toFixed(2)} ({selectedOrder.promo_code || 'Voucher'})
+                                            </p>
+                                        ) : null}
                                     </div>
                                     <div>
                                         <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Created At</p>

@@ -3,41 +3,131 @@ import { View, Text, TextInput, StyleSheet, ScrollView, TouchableOpacity, Alert,
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { orderService } from '../../services/orderService';
 import { useAuthStore } from '../../store/authStore';
+import { useOrderStore } from '../../store/orderStore';
+import { orderService } from '../../services/orderService';
 import * as ImagePicker from 'expo-image-picker';
 import { aiService } from '../../services/aiService';
 import { userService } from '../../services/userService';
+import { supabase } from '../../utils/supabase';
 
 export const CreateOrderScreen = ({ route, navigation }: any) => {
-    const { serviceType } = route.params || { serviceType: 'delivery' };
-    const isDelivery = serviceType === 'delivery';
+    const { 
+        pickupAddress, setPickup,
+        dropoffAddress, setDropoff,
+        pickupCoords, dropoffCoords,
+        packageDescription, setPackageDesc,
+        packageImage, setPackageImage,
+        aiEstimate, setAIEstimate,
+        errandLocation, setErrand,
+        errandCoords, errandList, setErrandInstructions,
+        serviceType, setServiceType,
+        resetOrder
+    } = useOrderStore();
 
-    // Auth & Loading State
-    const { user } = useAuthStore();
-    const [loading, setLoading] = useState(false);
-    const [showErrors, setShowErrors] = useState(false);
-
-    // Form State
-    const [pickupAddress, setPickupAddress] = useState('');
-    const [pickupCoords, setPickupCoords] = useState<{ latitude: number, longitude: number } | null>(null);
-    const [dropoffAddress, setDropoffAddress] = useState('');
-    const [dropoffCoords, setDropoffCoords] = useState<{ latitude: number, longitude: number } | null>(null);
-    const [packageDescription, setPackageDescription] = useState('');
-
-    const [errandLocation, setErrandLocation] = useState('');
-    const [errandCoords, setErrandCoords] = useState<{ latitude: number, longitude: number } | null>(null);
-    const [errandList, setErrandList] = useState('');
-
-    // AI scanning states
-    const [packageImage, setPackageImage] = useState<string | null>(null);
-    const [aiEstimate, setAiEstimate] = useState<string>('');
+    // AI States
     const [isScanning, setIsScanning] = useState(false);
+    const [suggestions, setSuggestions] = useState<string[]>([]);
 
     // Pricing States
     const [estimatedCost, setEstimatedCost] = useState(12.50);
     const [pricingSettings, setPricingSettings] = useState<{ base_delivery_fee: number; per_km_rate: number } | null>(null);
     const [bidPrice, setBidPrice] = useState<string>('12.50');
+
+    // Voucher & Promo States
+    const [promoCodeInput, setPromoCodeInput] = useState('');
+    const [appliedVoucher, setAppliedVoucher] = useState<{
+        code: string;
+        discount: number;
+        description: string;
+    } | null>(null);
+    const [validatingPromo, setValidatingPromo] = useState(false);
+    const [promoMessage, setPromoMessage] = useState<{ text: string; isError: boolean } | null>(null);
+
+    const handleApplyPromo = async () => {
+        const cleanCode = promoCodeInput.trim().toUpperCase();
+        if (!cleanCode) {
+            setPromoMessage({ text: 'Please enter a promo code', isError: true });
+            return;
+        }
+
+        const currentFare = parseFloat(bidPrice) || estimatedCost;
+        setValidatingPromo(true);
+        setPromoMessage(null);
+
+        try {
+            // 1. Query vouchers table for active voucher
+            const { data: voucher, error } = await supabase
+                .from('vouchers')
+                .select('*')
+                .eq('code', cleanCode)
+                .eq('is_active', true)
+                .single();
+
+            if (error || !voucher) {
+                // Fallback client check for default WELCOME263
+                if (cleanCode === 'WELCOME263') {
+                    if (currentFare < 4.00) {
+                        setPromoMessage({ text: 'Requires minimum order of $4.00', isError: true });
+                        return;
+                    }
+                    setAppliedVoucher({
+                        code: 'WELCOME263',
+                        discount: 2.00,
+                        description: '$2.00 OFF Welcome Voucher'
+                    });
+                    setPromoMessage({ text: '✓ $2.00 Welcome Voucher applied!', isError: false });
+                    return;
+                }
+                setPromoMessage({ text: 'Invalid or expired promo code', isError: true });
+                return;
+            }
+
+            // 2. Validate minimum order amount
+            const minAmount = parseFloat(voucher.min_order_amount || '4.00');
+            if (currentFare < minAmount) {
+                setPromoMessage({ text: `Requires minimum order of $${minAmount.toFixed(2)}`, isError: true });
+                return;
+            }
+
+            // 3. Check if user already redeemed this voucher
+            if (user) {
+                const { data: redemption } = await supabase
+                    .from('voucher_redemptions')
+                    .select('id')
+                    .eq('voucher_id', voucher.id)
+                    .eq('user_id', user.id)
+                    .single();
+
+                if (redemption) {
+                    setPromoMessage({ text: 'You have already redeemed this voucher', isError: true });
+                    return;
+                }
+            }
+
+            const discountVal = voucher.discount_type === 'percentage'
+                ? Math.round((currentFare * (parseFloat(voucher.discount_value) / 100)) * 100) / 100
+                : parseFloat(voucher.discount_value);
+
+            setAppliedVoucher({
+                code: voucher.code,
+                discount: discountVal,
+                description: voucher.description || `$${discountVal.toFixed(2)} OFF`
+            });
+            setPromoMessage({ text: `✓ ${voucher.code} applied! (-$${discountVal.toFixed(2)})`, isError: false });
+        } catch (err: any) {
+            console.error('Error validating promo code:', err);
+            setPromoMessage({ text: 'Could not validate promo code', isError: true });
+        } finally {
+            setValidatingPromo(false);
+        }
+    };
+
+    const handleRemovePromo = () => {
+        setAppliedVoucher(null);
+        setPromoCodeInput('');
+        setPromoMessage(null);
+    };
 
     // Sync custom bid with estimated cost updates
     useEffect(() => {
@@ -97,40 +187,74 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
         }
     }, [pickupCoords, dropoffCoords, errandCoords, serviceType, pricingSettings]);
 
+    // Auth & Loading State
+    const { user } = useAuthStore();
+    const [loading, setLoading] = useState(false);
+    const [showErrors, setShowErrors] = useState(false);
+
+    const isDelivery = serviceType === 'delivery';
+
+    // Smart Errand Assistant Logic
+    useEffect(() => {
+        if (errandLocation) {
+            generateSmartSuggestions(errandLocation);
+        }
+    }, [errandLocation]);
+
+    const generateSmartSuggestions = (location: string) => {
+        const loc = (location || '').toLowerCase();
+        let items: string[] = [];
+        
+        if (loc.includes('pharmacy') || loc.includes('chemist') || loc.includes('med')) {
+            items = ['Painkillers', 'Vitamins', 'First Aid Kit', 'Prescription', 'Face Masks'];
+        } else if (loc.includes('grocery') || loc.includes('supermarket') || loc.includes('spar') || loc.includes('pick n pay')) {
+            items = ['Milk (2L)', 'Fresh Bread', 'Eggs (Dozen)', 'Bottled Water', 'Snacks'];
+        } else if (loc.includes('fast food') || loc.includes('pizza') || loc.includes('burger') || loc.includes('chicken')) {
+            items = ['Combo Meal', 'Extra Fries', 'Large Soda', 'Napkins', 'Condiments'];
+        } else if (loc.includes('office') || loc.includes('stationery') || loc.includes('print')) {
+            items = ['A4 Paper', 'Ink Cartridge', 'Pens/Markers', 'Envelopes', 'Folders'];
+        } else {
+            items = ['General Pickup', 'Document Drop', 'Urgent Delivery', 'Small Package'];
+        }
+        setSuggestions(items);
+    };
+
+    const addSuggestionToErrand = (item: string) => {
+        const currentList = (errandList || '').trim();
+        const newList = currentList ? `${currentList}\n- ${item}` : `- ${item}`;
+        setErrandInstructions(newList);
+    };
+
+    // Initialize service type from route if provided
+    useEffect(() => {
+        if (route.params?.serviceType) {
+            setServiceType(route.params.serviceType);
+        }
+    }, [route.params?.serviceType]);
+
     // Handle incoming parameters from MapLocationPicker
     useEffect(() => {
-        if (route.params?.selectedCoordinate && route.params?.selectedAddress) {
-            const { locationType, selectedAddress, selectedCoordinate } = route.params;
-            
+        const { selectedCoordinate, selectedAddress, locationType, timestamp } = route.params || {};
+        
+        if (selectedCoordinate && selectedAddress && locationType && timestamp) {
             switch (locationType) {
                 case 'pickup':
-                    setPickupAddress(selectedAddress);
-                    setPickupCoords(selectedCoordinate);
+                    setPickup(selectedAddress, selectedCoordinate);
                     break;
                 case 'dropoff':
-                    setDropoffAddress(selectedAddress);
-                    setDropoffCoords(selectedCoordinate);
+                    setDropoff(selectedAddress, selectedCoordinate);
                     break;
                 case 'store':
-                    setErrandLocation(selectedAddress);
-                    setErrandCoords(selectedCoordinate);
+                    setErrand(selectedAddress, selectedCoordinate);
                     break;
             }
-
-            // Clear the params so they aren't re-consumed if the screen re-renders
-            navigation.setParams({
-                selectedCoordinate: undefined,
-                selectedAddress: undefined,
-                locationType: undefined
-            });
         }
-    }, [route.params]);
+    }, [route.params?.timestamp]);
 
     const handleScanPackage = async () => {
         const permission = await ImagePicker.requestCameraPermissionsAsync();
         if (permission.status !== 'granted') {
-            if (Platform.OS === 'web') alert('Camera access is required to scan your package.');
-            else Alert.alert('Permission Denied', 'Camera access is required to scan your package.');
+            Alert.alert('Permission Denied', 'Camera access is required to scan your package.');
             return;
         }
 
@@ -149,42 +273,42 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
 
     const performAIScan = async (base64Image?: string) => {
         if (!base64Image) {
-            if (Platform.OS === 'web') alert('No image data captured.');
-            else Alert.alert('Scan Error', 'No image data captured.');
+            Alert.alert('Scan Error', 'No image data captured.');
             return;
         }
         setIsScanning(true);
         try {
             const result = await aiService.classifyPackage(base64Image);
-            setAiEstimate(result.size_category);
+            setAIEstimate(result.size_category);
             
             // Auto-populate dimensions in the description text field
-            setPackageDescription((prev: string) => {
-                const prefix = `[AI Dimensions: ${result.dimensions} | Est. Weight: ${result.estimated_weight}]`;
-                return prev ? `${prefix}\n${prev}` : prefix;
-            });
+            const prefix = `[AI Dimensions: ${result.dimensions} | Est. Weight: ${result.estimated_weight}]`;
+            const newDesc = packageDescription ? `${prefix}\n${packageDescription}` : prefix;
+            setPackageDesc(newDesc);
 
-            const title = 'AI Analysis Complete';
-            const msg = `Our AI detected a ${result.size_category} (${result.dimensions}, ${result.estimated_weight}). We've updated your vehicle recommendation.`;
-            if (Platform.OS === 'web') alert(`${title}: ${msg}`);
-            else Alert.alert(title, msg);
+            Alert.alert(
+                'AI Analysis Complete', 
+                `Our AI detected a ${result.size_category} (${result.dimensions}, ${result.estimated_weight}). We've updated your vehicle recommendation.`
+            );
         } catch (error: any) {
             console.error('Gemini classification error:', error);
-            if (Platform.OS === 'web') alert('We couldn\'t classify the package automatically. Defaulting to standard categories.');
-            else Alert.alert(
+            Alert.alert(
                 'AI Scan Error', 
                 'We couldn\'t classify the package automatically. Defaulting to standard categories.'
             );
-            setAiEstimate('Medium Box');
+            setAIEstimate('Medium Box');
         } finally {
             setIsScanning(false);
         }
     };
 
     const handlePlaceOrder = async () => {
-        if (!dropoffAddress || (isDelivery && !pickupAddress) || (!isDelivery && !errandLocation)) {
+        const hasPickup = isDelivery ? !!pickupAddress : !!errandLocation;
+        const hasDropoff = !!dropoffAddress;
+
+        if (!hasDropoff || !hasPickup) {
             setShowErrors(true);
-            Alert.alert('Missing Fields', 'Please fill out all required location details.');
+            Alert.alert('Missing Fields', 'Please select both pickup and drop-off locations on the map.');
             return;
         }
 
@@ -199,7 +323,11 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
         try {
             if (!user) throw new Error("No user session found");
 
-            const order = await orderService.createOrder({
+            const grossAmount = offerAmount;
+            const discountAmount = appliedVoucher ? Math.min(appliedVoucher.discount, grossAmount) : 0;
+            const finalPayable = Math.max(0.50, Math.round((grossAmount - discountAmount) * 100) / 100);
+
+            const createdOrder = await orderService.createOrder({
                 customer_id: user.id,
                 service_type: serviceType,
                 status: 'pending',
@@ -214,35 +342,51 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                 package_description: isDelivery ? packageDescription : null,
                 package_image_url: packageImage,
                 ai_size_estimate: aiEstimate,
-                estimated_cost: offerAmount
+                estimated_cost: finalPayable,
+                gross_amount: grossAmount,
+                discount_amount: discountAmount,
+                promo_code: appliedVoucher?.code || null
             });
 
-            // Reset local states
-            setPickupAddress('');
-            setPickupCoords(null);
-            setDropoffAddress('');
-            setDropoffCoords(null);
-            setPackageDescription('');
-            setPackageImage(null);
-            setAiEstimate('');
+            // Record voucher redemption in background
+            if (appliedVoucher && discountAmount > 0) {
+                try {
+                    const { data: vRecord } = await supabase
+                        .from('vouchers')
+                        .select('id')
+                        .eq('code', appliedVoucher.code)
+                        .single();
+
+                    if (vRecord) {
+                        await supabase.from('voucher_redemptions').insert([{
+                            voucher_id: vRecord.id,
+                            user_id: user.id,
+                            order_id: createdOrder.id,
+                            discount_applied: discountAmount
+                        }]);
+                    }
+                } catch (vErr) {
+                    console.warn('Non-blocking: could not record voucher redemption:', vErr);
+                }
+            }
+
+            resetOrder();
+            setAppliedVoucher(null);
+            setPromoCodeInput('');
+            setPromoMessage(null);
             setEstimatedCost(pricingSettings?.base_delivery_fee ?? 5.00);
             setBidPrice((pricingSettings?.base_delivery_fee ?? 5.00).toFixed(2));
-
-            const title = "Order Confirmed";
-            const msg = "Your request has been placed and is waiting for your Mate!";
-            if (Platform.OS === 'web') {
-                alert(`${title}: ${msg}`);
-                navigation.navigate('CustomerTracking', { orderId: order.id });
-            } else {
-                Alert.alert(
-                    title,
-                    msg,
-                    [{ text: "OK", onPress: () => navigation.navigate('CustomerTracking', { orderId: order.id }) }]
-                );
-            }
+            
+            Alert.alert(
+                "Order Confirmed", 
+                "Your request has been placed and is waiting for your Mate!", 
+                [{ 
+                    text: "Track Order", 
+                    onPress: () => navigation.navigate('CustomerTracking', { orderId: createdOrder.id }) 
+                }]
+            );
         } catch (error: any) {
-            if (Platform.OS === 'web') alert(`Order Error: ${error.message}`);
-            else Alert.alert("Order Error", error.message);
+            Alert.alert("Order Error", error.message);
         } finally {
             setLoading(false);
         }
@@ -250,17 +394,13 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
 
     const handleFillMockData = () => {
         if (isDelivery) {
-            setPickupAddress('123 Green Ave, Silicon Valley');
-            setPickupCoords({ latitude: 37.78825, longitude: -122.4324 });
-            setDropoffAddress('456 Blue Blvd, San Francisco');
-            setDropoffCoords({ latitude: 37.8000, longitude: -122.4200 });
-            setPackageDescription('Large Parcel with Electronics');
+            setPickup('123 Green Ave, Silicon Valley', { latitude: 37.78825, longitude: -122.4324 });
+            setDropoff('456 Blue Blvd, San Francisco', { latitude: 37.8000, longitude: -122.4200 });
+            setPackageDesc('Large Parcel with Electronics');
         } else {
-            setErrandLocation('Whole Foods Market, SOMA');
-            setErrandCoords({ latitude: 37.7700, longitude: -122.4000 });
-            setDropoffAddress('My Apartment, 789 Red St');
-            setDropoffCoords({ latitude: 37.7800, longitude: -122.4100 });
-            setErrandList('Milk, Bread, Fresh Apples');
+            setErrand('Whole Foods Market, SOMA', { latitude: 37.7700, longitude: -122.4000 });
+            setDropoff('My Apartment, 789 Red St', { latitude: 37.7800, longitude: -122.4100 });
+            setErrandInstructions('- Milk\n- Bread\n- Fresh Apples');
         }
         setShowErrors(false);
     };
@@ -295,7 +435,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                     <TouchableOpacity
                                         style={[styles.inputButton, showErrors && !pickupAddress ? styles.errorInput : null]}
                                         activeOpacity={0.7}
-                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'pickup' })}
+                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'pickup', serviceType })}
                                     >
                                         <Text style={pickupAddress ? styles.inputText : styles.placeholderText}>
                                             {pickupAddress || "Tap to select pickup on map"}
@@ -312,7 +452,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                     <TouchableOpacity
                                         style={[styles.inputButton, showErrors && !dropoffAddress ? styles.errorInput : null]}
                                         activeOpacity={0.7}
-                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'dropoff' })}
+                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'dropoff', serviceType })}
                                     >
                                         <Text style={dropoffAddress ? styles.inputText : styles.placeholderText}>
                                             {dropoffAddress || "Tap to select drop-off on map"}
@@ -372,7 +512,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                         placeholder="Describe the package (e.g., Documents, Electronics)"
                                         placeholderTextColor="#94A3B8"
                                         value={packageDescription}
-                                        onChangeText={setPackageDescription}
+                                        onChangeText={setPackageDesc}
                                         multiline
                                         selectionColor="#055FEE"
                                     />
@@ -387,7 +527,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                     <TouchableOpacity
                                         style={[styles.inputButton, showErrors && !errandLocation ? styles.errorInput : null]}
                                         activeOpacity={0.7}
-                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'store' })}
+                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'store', serviceType })}
                                     >
                                         <Text style={errandLocation ? styles.inputText : styles.placeholderText}>
                                             {errandLocation || "Tap to select store on map"}
@@ -397,12 +537,30 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                     <View style={styles.divider} />
 
                                     <Text style={styles.label}>Shopping List / Instructions</Text>
+                                    
+                                    {suggestions.length > 0 && (
+                                        <View style={styles.suggestionsWrapper}>
+                                            <Text style={styles.suggestionTitle}>AI SUGGESTIONS:</Text>
+                                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionsScroll}>
+                                                {suggestions.map((item, idx) => (
+                                                    <TouchableOpacity 
+                                                        key={idx} 
+                                                        style={styles.suggestionChip}
+                                                        onPress={() => addSuggestionToErrand(item)}
+                                                    >
+                                                        <Text style={styles.suggestionChipText}>+ {item}</Text>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </ScrollView>
+                                        </View>
+                                    )}
+
                                     <TextInput
                                         style={[styles.input, styles.textArea]}
                                         placeholder="What do you need us to buy or do?"
                                         placeholderTextColor="#94A3B8"
                                         value={errandList}
-                                        onChangeText={setErrandList}
+                                        onChangeText={setErrandInstructions}
                                         multiline
                                         selectionColor="#055FEE"
                                     />
@@ -417,7 +575,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                     <TouchableOpacity
                                         style={[styles.inputButton, showErrors && !dropoffAddress ? styles.errorInput : null]}
                                         activeOpacity={0.7}
-                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'dropoff' })}
+                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'dropoff', serviceType })}
                                     >
                                         <Text style={dropoffAddress ? styles.inputText : styles.placeholderText}>
                                             {dropoffAddress || "Tap to drop-off on map"}
@@ -428,6 +586,53 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                         </BlurView>
 
                         <View style={styles.summarySection}>
+                            {/* Promo Code Input Section */}
+                            <View style={styles.promoSection}>
+                                <Text style={styles.promoTitle}>🎁 Have a Promo Code?</Text>
+                                <View style={styles.promoRow}>
+                                    <TextInput
+                                        style={styles.promoInput}
+                                        value={promoCodeInput}
+                                        onChangeText={(text) => {
+                                            setPromoCodeInput(text.toUpperCase());
+                                            setPromoMessage(null);
+                                        }}
+                                        placeholder="e.g. WELCOME263"
+                                        placeholderTextColor="#94A3B8"
+                                        autoCapitalize="characters"
+                                        editable={!appliedVoucher}
+                                    />
+                                    {appliedVoucher ? (
+                                        <TouchableOpacity 
+                                            style={styles.promoRemoveBtn} 
+                                            onPress={handleRemovePromo}
+                                        >
+                                            <Text style={styles.promoRemoveBtnText}>Remove</Text>
+                                        </TouchableOpacity>
+                                    ) : (
+                                        <TouchableOpacity 
+                                            style={styles.promoApplyBtn} 
+                                            onPress={handleApplyPromo}
+                                            disabled={validatingPromo}
+                                        >
+                                            {validatingPromo ? (
+                                                <ActivityIndicator size="small" color="#FFFFFF" />
+                                            ) : (
+                                                <Text style={styles.promoApplyBtnText}>Apply</Text>
+                                            )}
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+
+                                {promoMessage && (
+                                    <Text style={[styles.promoMessageText, promoMessage.isError ? styles.promoErrorText : styles.promoSuccessText]}>
+                                        {promoMessage.text}
+                                    </Text>
+                                )}
+                            </View>
+
+                            <View style={styles.bidDivider} />
+
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Estimated Cost:</Text>
                                 <Text style={styles.summaryTitle}>${estimatedCost.toFixed(2)}</Text>
@@ -464,7 +669,34 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                 </View>
                             </View>
 
+                            {appliedVoucher && (
+                                <>
+                                    <View style={styles.bidDivider} />
+                                    <View style={styles.summaryRow}>
+                                        <Text style={styles.summaryLabel}>Subtotal Fare:</Text>
+                                        <Text style={styles.summaryText}>${(parseFloat(bidPrice) || estimatedCost).toFixed(2)}</Text>
+                                    </View>
+                                    <View style={styles.summaryRow}>
+                                        <Text style={[styles.summaryLabel, { color: '#10B981', fontWeight: '700' }]}>
+                                            Voucher ({appliedVoucher.code}):
+                                        </Text>
+                                        <Text style={[styles.summaryText, { color: '#10B981', fontWeight: '800' }]}>
+                                            -${appliedVoucher.discount.toFixed(2)}
+                                        </Text>
+                                    </View>
+                                </>
+                            )}
+
                             <View style={styles.bidDivider} />
+
+                            <View style={styles.summaryRow}>
+                                <Text style={styles.summaryLabel}>Total to Pay:</Text>
+                                <Text style={[styles.summaryTitle, { color: appliedVoucher ? '#10B981' : '#055FEE' }]}>
+                                    ${appliedVoucher 
+                                        ? Math.max(0.50, ((parseFloat(bidPrice) || estimatedCost) - appliedVoucher.discount)).toFixed(2)
+                                        : (parseFloat(bidPrice) || estimatedCost).toFixed(2)}
+                                </Text>
+                            </View>
 
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Payment Method:</Text>
@@ -687,9 +919,9 @@ const styles = StyleSheet.create({
         borderColor: '#CBD5E1',
     },
     mockButtonText: {
-        color: '#475569',
-        fontSize: 15,
-        fontWeight: '600',
+        color: '#0F172A',
+        fontSize: 16,
+        fontWeight: 'bold',
     },
     scanButton: {
         borderRadius: 16,
@@ -763,6 +995,34 @@ const styles = StyleSheet.create({
         fontWeight: '900',
         fontSize: 14,
     },
+    suggestionsWrapper: {
+        marginBottom: 12,
+    },
+    suggestionTitle: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#64748B',
+        letterSpacing: 1,
+        marginBottom: 8,
+        marginLeft: 4,
+    },
+    suggestionsScroll: {
+        gap: 8,
+        paddingBottom: 4,
+    },
+    suggestionChip: {
+        backgroundColor: 'rgba(5, 95, 238, 0.1)',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(176, 106, 40, 0.3)',
+    },
+    suggestionChipText: {
+        color: '#055FEE',
+        fontSize: 13,
+        fontWeight: '600',
+    },
     bidSection: {
         marginTop: 16,
         paddingTop: 16,
@@ -828,5 +1088,71 @@ const styles = StyleSheet.create({
         height: 1,
         backgroundColor: 'rgba(0,0,0,0.05)',
         marginVertical: 16,
+    },
+    promoSection: {
+        marginBottom: 16,
+    },
+    promoTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#334155',
+        marginBottom: 8,
+        marginLeft: 2,
+    },
+    promoRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    promoInput: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#0F172A',
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.08)',
+        letterSpacing: 1,
+    },
+    promoApplyBtn: {
+        backgroundColor: '#055FEE',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    promoApplyBtnText: {
+        color: '#FFFFFF',
+        fontWeight: '700',
+        fontSize: 13,
+    },
+    promoRemoveBtn: {
+        backgroundColor: '#FEE2E2',
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    promoRemoveBtnText: {
+        color: '#EF4444',
+        fontWeight: '700',
+        fontSize: 12,
+    },
+    promoMessageText: {
+        fontSize: 12,
+        fontWeight: '600',
+        marginTop: 6,
+        marginLeft: 4,
+    },
+    promoErrorText: {
+        color: '#EF4444',
+    },
+    promoSuccessText: {
+        color: '#10B981',
     },
 });
