@@ -84,7 +84,7 @@ serve(async (req: any) => {
             }
 
             const uniqueRef = `CP-${courierId.substring(0, 8)}-${Date.now()}`
-            const publicUniqueId = Deno.env.get('CLICKNPAY_PUBLIC_UNIQUE_ID') || 'HQGVaTYJihldpvzsw'
+            const publicUniqueId = Deno.env.get('CLICKNPAY_PUBLIC_UNIQUE_ID') || 'QFUcFtITBUKLzuwNa'
             const returnUrl = Deno.env.get('CLICKNPAY_RETURN_URL') || 'https://shipmate.app/payment-return'
             const customerPhone = phoneNumber || user.phone || '0000000000'
 

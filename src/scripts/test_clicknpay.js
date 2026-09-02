@@ -39,7 +39,7 @@ function loadEnv() {
 loadEnv();
 
 const CLICKNPAY_BASE_URL = 'https://backendservices.clicknpay.africa:2081/payme/orders';
-const PUBLIC_UNIQUE_ID = process.env.CLICKNPAY_PUBLIC_UNIQUE_ID || 'HQGVaTYJihldpvzsw';
+const PUBLIC_UNIQUE_ID = process.env.CLICKNPAY_PUBLIC_UNIQUE_ID || 'QFUcFtITBUKLzuwNa';
 const RETURN_URL = process.env.CLICKNPAY_RETURN_URL || 'https://shipmate.app/payment-return';
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
