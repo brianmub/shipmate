@@ -30,7 +30,7 @@ import {
   Tag
 } from 'lucide-react';
 
-const DRIVER_APK_DOWNLOAD_URL = "https://expo.dev/artifacts/eas/H65KbFcBGcyQvb8r_psjVp_hhU9V7iEOZJtPOOcQN9o.apk";
+const DRIVER_APK_DOWNLOAD_URL = "https://expo.dev/artifacts/eas/2wd4lcEYzQ6IZqHRrcupe2itk-f3I0i8DyzOLczGW4c.apk";
 
 export const Landing = () => {
   // Customer Early Access / Parcel Modal state
