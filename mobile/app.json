@@ -16,7 +16,7 @@
     },
     "android": {
       "package": "com.shipmate.shipmate",
-      "versionCode": 15,
+      "versionCode": 16,
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyPlaceholderGoogleMapsKeyForAndroid"

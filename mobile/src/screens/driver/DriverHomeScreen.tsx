@@ -165,20 +165,30 @@ export const DriverHomeScreen = ({ navigation }: any) => {
 
                     {/* WALLET STATUS BANNERS */}
                     {walletStatus === 'locked' && (
-                        <View style={[styles.offlineWarning, { backgroundColor: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.4)' }]}>
-                            <Text style={styles.warningIcon}>🔒</Text>
-                            <Text style={[styles.offlineWarningText, { color: '#FCA5A5' }]}>
-                                Wallet Lockout: Your balance is below $0.25. Please go to the Wallet screen and top up at least $5.00 to accept new jobs.
-                            </Text>
-                        </View>
+                        <TouchableOpacity 
+                            activeOpacity={0.8}
+                            onPress={() => navigation.navigate('Wallet')}
+                        >
+                            <View style={[styles.offlineWarning, { backgroundColor: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.4)' }]}>
+                                <Text style={styles.warningIcon}>🔒</Text>
+                                <Text style={[styles.offlineWarningText, { color: '#FCA5A5' }]}>
+                                    Wallet Lockout: Your balance is below $0.25. Tap here to top up with ClicknPay.
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
                     )}
                     {walletStatus !== 'locked' && walletBalance !== null && walletBalance <= 3.00 && (
-                        <View style={[styles.offlineWarning, { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: 'rgba(245, 158, 11, 0.4)' }]}>
-                            <Text style={styles.warningIcon}>⚠️</Text>
-                            <Text style={[styles.offlineWarningText, { color: '#FCD34D' }]}>
-                                Low Wallet Balance: Your balance is ${walletBalance.toFixed(2)}. Please top up soon to prevent account lockout.
-                            </Text>
-                        </View>
+                        <TouchableOpacity 
+                            activeOpacity={0.8}
+                            onPress={() => navigation.navigate('Wallet')}
+                        >
+                            <View style={[styles.offlineWarning, { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: 'rgba(245, 158, 11, 0.4)' }]}>
+                                <Text style={styles.warningIcon}>⚠️</Text>
+                                <Text style={[styles.offlineWarningText, { color: '#FCD34D' }]}>
+                                    Low Wallet Balance: Your balance is ${walletBalance.toFixed(2)}. Tap here to top up with ClicknPay.
+                                </Text>
+                            </View>
+                        </TouchableOpacity>
                     )}
 
                     {/* PREDICTIVE HEATMAP SECTION */}
@@ -245,10 +255,16 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                     </View>
 
                     <View style={styles.statsGrid}>
-                        <BlurView intensity={20} tint="light" style={styles.statCardContainer}>
-                            <Text style={styles.statLabel}>Wallet Balance</Text>
-                            <Text style={[styles.statValue, styles.earningsValue]}>${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}</Text>
-                        </BlurView>
+                        <TouchableOpacity 
+                            style={{ flex: 1 }} 
+                            activeOpacity={0.8} 
+                            onPress={() => navigation.navigate('Wallet')}
+                        >
+                            <BlurView intensity={20} tint="light" style={styles.statCardContainer}>
+                                <Text style={styles.statLabel}>Wallet Balance (Tap)</Text>
+                                <Text style={[styles.statValue, styles.earningsValue]}>${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}</Text>
+                            </BlurView>
+                        </TouchableOpacity>
                         <BlurView intensity={20} tint="light" style={styles.statCardContainer}>
                             <Text style={styles.statLabel}>Deliveries</Text>
                             <Text style={styles.statValue}>{profile?.completed_deliveries || 0}</Text>

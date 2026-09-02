@@ -7,7 +7,8 @@
     "android": "npx expo start --android",
     "ios": "npx expo start --ios",
     "web": "npx expo start --web",
-    "test:full": "ts-node src/scripts/test_everything.ts"
+    "test:full": "ts-node src/scripts/test_everything.ts",
+    "test:clicknpay": "node src/scripts/test_clicknpay.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
