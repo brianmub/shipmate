@@ -23,17 +23,31 @@ import {
   AlertCircle,
   Download,
   MessageSquare,
-  FileCheck
+  FileCheck,
+  Building,
+  ShoppingBag,
+  Gift,
+  Tag
 } from 'lucide-react';
 
 const DRIVER_APK_DOWNLOAD_URL = "https://expo.dev/artifacts/eas/H65KbFcBGcyQvb8r_psjVp_hhU9V7iEOZJtPOOcQN9o.apk";
 
 export const Landing = () => {
-  // Customer Early Access / Waitlist state
-  const [email, setEmail] = useState('');
-  const [submitted, setSubmitted] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  // Customer Early Access / Parcel Modal state
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+  const [customerForm, setCustomerForm] = useState({
+    fullName: '',
+    email: '',
+    phone: '',
+    city: 'Harare',
+    customerType: 'personal' as 'personal' | 'business',
+    businessName: '',
+    estimatedFrequency: 'occasional' as 'daily' | 'weekly' | 'occasional',
+    notes: ''
+  });
+  const [customerSubmitting, setCustomerSubmitting] = useState(false);
+  const [customerSubmitted, setCustomerSubmitted] = useState(false);
+  const [customerError, setCustomerError] = useState('');
 
   // Courier Application Modal state
   const [isCourierModalOpen, setIsCourierModalOpen] = useState(false);
@@ -82,33 +96,40 @@ export const Landing = () => {
     });
   }, []);
 
-  // Customer Waitlist Submission
-  const handleEmailSubmit = async (e: React.FormEvent) => {
+  // Customer Lead Submission (Saves to Supabase customer_leads)
+  const handleCustomerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) return;
+    if (!customerForm.fullName || !customerForm.phone || !customerForm.email) {
+      setCustomerError('Please fill in your name, email, and mobile / WhatsApp number.');
+      return;
+    }
 
-    setLoading(true);
-    setError('');
+    setCustomerSubmitting(true);
+    setCustomerError('');
 
     try {
-      const endpoint = import.meta.env.VITE_EMAIL_CAPTURE_URL || 'https://formspree.io/f/placeholder_shipmate';
-      if (endpoint.includes('placeholder_shipmate')) {
-        await new Promise(resolve => setTimeout(resolve, 800));
-      } else {
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, source: 'shipmate_customer_waitlist' })
-        });
-        if (!response.ok) throw new Error('Form submission failed');
-      }
+      const { error: insertError } = await supabase
+        .from('customer_leads')
+        .insert([{
+          full_name: customerForm.fullName.trim(),
+          email: customerForm.email.trim().toLowerCase(),
+          phone: customerForm.phone.trim(),
+          city: customerForm.city,
+          customer_type: customerForm.customerType,
+          business_name: customerForm.customerType === 'business' ? customerForm.businessName.trim() : null,
+          estimated_frequency: customerForm.estimatedFrequency,
+          notes: customerForm.notes.trim() || null,
+          promo_code: 'WELCOME263',
+          status: 'new'
+        }]);
 
-      setSubmitted(true);
-      setEmail('');
+      if (insertError) throw insertError;
+      setCustomerSubmitted(true);
     } catch (err: any) {
-      setError(err.message || 'Something went wrong. Please try again.');
+      console.error('Error submitting customer lead:', err);
+      setCustomerError(err.message || 'Unable to submit request. Please try again.');
     } finally {
-      setLoading(false);
+      setCustomerSubmitting(false);
     }
   };
 
@@ -169,6 +190,22 @@ export const Landing = () => {
     });
   };
 
+  const resetCustomerModal = () => {
+    setIsCustomerModalOpen(false);
+    setCustomerSubmitted(false);
+    setCustomerError('');
+    setCustomerForm({
+      fullName: '',
+      email: '',
+      phone: '',
+      city: 'Harare',
+      customerType: 'personal',
+      businessName: '',
+      estimatedFrequency: 'occasional',
+      notes: ''
+    });
+  };
+
   return (
     <div className="min-h-screen bg-[#F5F7FA] text-[#0B1F4D] font-sans antialiased selection:bg-[#2D5FE0]/25">
       
@@ -195,7 +232,7 @@ export const Landing = () => {
           </button>
         </nav>
 
-        {/* Action Button */}
+        {/* Action Buttons */}
         <div className="flex items-center gap-3">
           <button 
             onClick={() => setIsCourierModalOpen(true)}
@@ -204,10 +241,11 @@ export const Landing = () => {
             Driver Signup
           </button>
           <button 
-            onClick={() => scrollToSection('download')}
-            className="bg-[#2D5FE0] hover:bg-[#2D5FE0]/90 text-white font-bold text-xs sm:text-sm px-5 py-2.5 rounded-full shadow-lg shadow-[#2D5FE0]/15 transition-all hover:-translate-y-0.5 cursor-pointer"
+            onClick={() => setIsCustomerModalOpen(true)}
+            className="bg-[#2D5FE0] hover:bg-[#2D5FE0]/90 text-white font-bold text-xs sm:text-sm px-5 py-2.5 rounded-full shadow-lg shadow-[#2D5FE0]/15 transition-all hover:-translate-y-0.5 cursor-pointer flex items-center gap-1.5"
           >
-            Send a Parcel
+            <Package className="w-3.5 h-3.5" />
+            <span>Send a Parcel</span>
           </button>
         </div>
       </header>
@@ -228,16 +266,16 @@ export const Landing = () => {
           </h1>
 
           <p className="text-lg sm:text-xl text-[#0B1F4D]/80 font-normal leading-relaxed max-w-xl mx-auto lg:mx-0">
-            Fast, safe delivery — from packages and documents to store shopping. Send a parcel across town or earn flexible income delivering as a verified driver.
+            Fast, safe delivery — from packages and documents to retail store shopping. Send a parcel across town or earn flexible income delivering as a verified driver.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4 pt-4">
             <button 
-              onClick={() => scrollToSection('download')}
+              onClick={() => setIsCustomerModalOpen(true)}
               className="w-full sm:w-auto bg-[#2D5FE0] hover:bg-[#2D5FE0]/90 text-white font-bold px-8 py-4 rounded-2xl shadow-xl shadow-[#2D5FE0]/20 transition-all hover:-translate-y-1 text-center cursor-pointer flex flex-col items-center sm:items-start"
             >
               <span>Send a Parcel</span>
-              <span className="text-[11px] font-normal text-white/80">For Customers & Senders</span>
+              <span className="text-[11px] font-normal text-white/80">Get $2 Off First Delivery</span>
             </button>
             <button 
               onClick={() => setIsCourierModalOpen(true)}
@@ -328,7 +366,7 @@ export const Landing = () => {
             </div>
             <h3 className="text-xl font-bold text-[#0B1F4D]">Request a Delivery</h3>
             <p className="text-[#0B1F4D]/70 text-sm leading-relaxed">
-              Open the app, enter pickup and drop-off addresses, select your delivery vehicle type, and see your transparent pricing instantly.
+              Open the app or web portal, enter pickup and drop-off addresses, select your delivery vehicle type, and see your transparent pricing instantly.
             </p>
           </div>
 
@@ -342,7 +380,7 @@ export const Landing = () => {
             </div>
             <h3 className="text-xl font-bold text-[#0B1F4D]">Driver Dispatched</h3>
             <p className="text-[#0B1F4D]/70 text-sm leading-relaxed">
-              A nearby verified courier accepts your order. Track their live GPS route in real-time as they collect your package.
+              A nearby verified courier accepts your order. Track their live GPS route in real-time as they collect and transport your package.
             </p>
           </div>
 
@@ -356,7 +394,7 @@ export const Landing = () => {
             </div>
             <h3 className="text-xl font-bold text-[#0B1F4D]">Delivered with Proof</h3>
             <p className="text-[#0B1F4D]/70 text-sm leading-relaxed">
-              The recipient signs with secure OTP acknowledgment and photo proof of delivery. Direct, safe, and recorded.
+              The recipient signs with secure OTP acknowledgment and photo proof of delivery. Direct, safe, and fully recorded.
             </p>
           </div>
         </div>
@@ -456,69 +494,41 @@ export const Landing = () => {
       </section>
 
       {/* 6. FOR CUSTOMERS / SENDERS WAITLIST */}
-      <section id="download" className="py-20 px-4 sm:px-8 max-w-4xl mx-auto text-center space-y-10">
+      <section id="customers" className="py-20 px-4 sm:px-8 max-w-4xl mx-auto text-center space-y-10">
         <div className="space-y-4">
           <div className="inline-block bg-[#2D5FE0]/10 text-[#2D5FE0] text-xs font-bold uppercase tracking-wider px-4 py-1.5 rounded-full">
             FOR SENDERS & BUSINESSES
           </div>
           <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-[#0B1F4D]">Send Anything Across Town with ShipMate</h2>
           <p className="text-base text-[#0B1F4D]/70 max-w-xl mx-auto">
-            From urgent business paperwork to online store purchases and personal errands. Join the early access waitlist for special launch delivery discounts.
+            From urgent business paperwork to online store purchases and personal errands. Register for early access to get <strong className="text-[#2D5FE0]">$2.00 OFF</strong> your first delivery!
           </p>
         </div>
 
-        {/* Email Capture Form */}
-        <div className="max-w-md mx-auto bg-white border border-[#0B1F4D]/5 p-8 rounded-[2.5rem] shadow-xl">
-          {!submitted ? (
-            <form onSubmit={handleEmailSubmit} className="space-y-4">
-              <div className="text-left space-y-2">
-                <label className="text-xs font-extrabold text-[#0B1F4D]/60 uppercase tracking-wider ml-1">Email Address</label>
-                <div className="relative">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <input 
-                    type="email"
-                    placeholder="name@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-[#F5F7FA] border border-[#0B1F4D]/10 rounded-2xl py-4 pl-12 pr-4 text-[#0B1F4D] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2D5FE0]/50 transition-all text-sm font-semibold"
-                    required
-                  />
-                </div>
-              </div>
-
-              {error && (
-                <div className="text-xs text-rose-500 font-bold bg-rose-50 border border-rose-100 p-3 rounded-xl">
-                  {error}
-                </div>
-              )}
-
-              <button 
-                type="submit"
-                disabled={loading}
-                className="w-full bg-[#2D5FE0] hover:bg-[#2D5FE0]/90 disabled:bg-[#2D5FE0]/50 text-white font-bold py-4 rounded-2xl shadow-lg shadow-[#2D5FE0]/15 transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                {loading ? 'Submitting...' : 'Get Early Customer Access'}
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </form>
-          ) : (
-            <div className="space-y-4 py-4 text-center">
-              <div className="w-12 h-12 bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-sm">
-                <CheckCircle2 className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold text-[#0B1F4D]">You're on the customer list!</h3>
-              <p className="text-sm text-[#0B1F4D]/70 max-w-xs mx-auto">
-                Thank you for signing up. We will notify you with early delivery credits as soon as customer slots go live.
-              </p>
-            </div>
-          )}
+        {/* Promo Voucher Banner */}
+        <div className="max-w-md mx-auto bg-gradient-to-r from-[#2D5FE0] to-[#5B99F2] text-white p-6 rounded-[2.5rem] shadow-xl text-center space-y-4">
+          <div className="inline-flex items-center gap-2 bg-white/20 text-white px-3.5 py-1.5 rounded-full text-xs font-black tracking-wider uppercase">
+            <Gift className="w-4 h-4 text-[#F2A33D]" />
+            <span>Welcome Offer: Promo Code WELCOME263</span>
+          </div>
+          <div>
+            <h3 className="text-2xl font-black text-white">$2.00 Delivery Credit</h3>
+            <p className="text-xs text-white/80 mt-1">Get immediate delivery discounts as soon as beta dispatch launches.</p>
+          </div>
+          <button
+            onClick={() => setIsCustomerModalOpen(true)}
+            className="w-full bg-white text-[#0B1F4D] hover:bg-slate-100 font-extrabold py-3.5 rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer text-sm"
+          >
+            <Package className="w-4 h-4 text-[#2D5FE0]" />
+            <span>Claim $2 Voucher & Send a Parcel</span>
+          </button>
         </div>
 
-        {/* Play Store Beta Status */}
+        {/* Beta Status */}
         <div className="flex flex-col sm:flex-row justify-center items-center gap-4 pt-6 text-sm text-[#0B1F4D]/60 font-semibold">
           <div className="flex items-center gap-2 bg-white/60 px-5 py-3 rounded-2xl border border-[#0B1F4D]/5">
             <span>🤖</span>
-            <span>Android: Google Play Closed Beta & Standalone APK</span>
+            <span>Android: Closed Beta & Direct APK</span>
           </div>
           <div className="flex items-center gap-2 bg-white/60 px-5 py-3 rounded-2xl border border-[#0B1F4D]/5">
             <span>🍎</span>
@@ -589,7 +599,236 @@ export const Landing = () => {
       </footer>
 
       {/* ========================================================================= */}
-      {/* 7. INTERACTIVE COURIER APPLICATION & ONBOARDING MODAL */}
+      {/* 7. CUSTOMER / SENDER ONBOARDING & PARCEL ACCESS MODAL */}
+      {/* ========================================================================= */}
+      {isCustomerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B1F4D]/75 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">
+          <div className="relative w-full max-w-xl bg-white rounded-[2.5rem] shadow-2xl border border-slate-200 overflow-hidden my-8">
+            
+            {/* Header */}
+            <div className="bg-gradient-to-r from-[#2D5FE0] to-[#18387A] text-white p-6 sm:p-8 flex items-start justify-between relative">
+              <div className="space-y-1">
+                <div className="inline-flex items-center gap-2 bg-white/20 text-white px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider">
+                  <Gift className="w-3 h-3 text-[#F2A33D]" />
+                  <span>$2.00 Off First Delivery</span>
+                </div>
+                <h3 className="text-2xl font-black text-white">Send a Parcel with ShipMate</h3>
+                <p className="text-xs text-white/70">
+                  {customerSubmitted 
+                    ? 'Registration complete! Your promo code is active.' 
+                    : 'Fast, secure parcel delivery across town with verified drivers.'}
+                </p>
+              </div>
+
+              <button 
+                onClick={resetCustomerModal}
+                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 sm:p-8 max-h-[80vh] overflow-y-auto">
+              {!customerSubmitted ? (
+                <form onSubmit={handleCustomerSubmit} className="space-y-6">
+                  {customerError && (
+                    <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{customerError}</span>
+                    </div>
+                  )}
+
+                  {/* Account Type Toggle (Personal vs Business) */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-extrabold text-[#0B1F4D]/70 uppercase tracking-wider">
+                      I am sending parcels as: *
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setCustomerForm({ ...customerForm, customerType: 'personal' })}
+                        className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                          customerForm.customerType === 'personal'
+                            ? 'bg-[#2D5FE0]/10 border-[#2D5FE0] text-[#2D5FE0] shadow-sm font-bold'
+                            : 'bg-[#F5F7FA] border-slate-200 text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        <ShoppingBag className="w-5 h-5" />
+                        <div>
+                          <p className="text-xs font-bold text-[#0B1F4D]">Personal</p>
+                          <p className="text-[10px] text-slate-500">Errands & family parcels</p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setCustomerForm({ ...customerForm, customerType: 'business' })}
+                        className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                          customerForm.customerType === 'business'
+                            ? 'bg-[#2D5FE0]/10 border-[#2D5FE0] text-[#2D5FE0] shadow-sm font-bold'
+                            : 'bg-[#F5F7FA] border-slate-200 text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        <Building className="w-5 h-5" />
+                        <div>
+                          <p className="text-xs font-bold text-[#0B1F4D]">Business / Shop</p>
+                          <p className="text-[10px] text-slate-500">E-commerce, bakery, retail</p>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Business Name (if applicable) */}
+                  {customerForm.customerType === 'business' && (
+                    <div className="space-y-1.5 animate-in fade-in duration-200">
+                      <label className="text-xs font-extrabold text-[#0B1F4D]/70 uppercase tracking-wider">Business / Store Name</label>
+                      <input 
+                        type="text" 
+                        placeholder="e.g. Harare Bakehouse or TechZone"
+                        value={customerForm.businessName}
+                        onChange={(e) => setCustomerForm({ ...customerForm, businessName: e.target.value })}
+                        className="w-full bg-[#F5F7FA] border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-[#0B1F4D] focus:outline-none focus:ring-2 focus:ring-[#2D5FE0]/40"
+                      />
+                    </div>
+                  )}
+
+                  {/* Contact Inputs */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-extrabold text-[#0B1F4D]/70 uppercase tracking-wider">Full Name *</label>
+                      <input 
+                        type="text" 
+                        placeholder="e.g. Sarah Chikwanha"
+                        value={customerForm.fullName}
+                        onChange={(e) => setCustomerForm({ ...customerForm, fullName: e.target.value })}
+                        required
+                        className="w-full bg-[#F5F7FA] border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-[#0B1F4D] focus:outline-none focus:ring-2 focus:ring-[#2D5FE0]/40"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-extrabold text-[#0B1F4D]/70 uppercase tracking-wider">WhatsApp / Phone *</label>
+                      <input 
+                        type="tel" 
+                        placeholder="e.g. 077 555 1234"
+                        value={customerForm.phone}
+                        onChange={(e) => setCustomerForm({ ...customerForm, phone: e.target.value })}
+                        required
+                        className="w-full bg-[#F5F7FA] border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-[#0B1F4D] focus:outline-none focus:ring-2 focus:ring-[#2D5FE0]/40"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-extrabold text-[#0B1F4D]/70 uppercase tracking-wider">Email Address *</label>
+                      <input 
+                        type="email" 
+                        placeholder="name@example.com"
+                        value={customerForm.email}
+                        onChange={(e) => setCustomerForm({ ...customerForm, email: e.target.value })}
+                        required
+                        className="w-full bg-[#F5F7FA] border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-[#0B1F4D] focus:outline-none focus:ring-2 focus:ring-[#2D5FE0]/40"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-extrabold text-[#0B1F4D]/70 uppercase tracking-wider">City / Suburb *</label>
+                      <select 
+                        value={customerForm.city}
+                        onChange={(e) => setCustomerForm({ ...customerForm, city: e.target.value })}
+                        className="w-full bg-[#F5F7FA] border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-[#0B1F4D] focus:outline-none focus:ring-2 focus:ring-[#2D5FE0]/40"
+                      >
+                        <option value="Harare">Harare</option>
+                        <option value="Bulawayo">Bulawayo</option>
+                        <option value="Chitungwiza">Chitungwiza</option>
+                        <option value="Mutare">Mutare</option>
+                        <option value="Gweru">Gweru</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Delivery Frequency */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-extrabold text-[#0B1F4D]/70 uppercase tracking-wider">How often do you send packages?</label>
+                    <select 
+                      value={customerForm.estimatedFrequency}
+                      onChange={(e) => setCustomerForm({ ...customerForm, estimatedFrequency: e.target.value as any })}
+                      className="w-full bg-[#F5F7FA] border border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold text-[#0B1F4D] focus:outline-none focus:ring-2 focus:ring-[#2D5FE0]/40"
+                    >
+                      <option value="occasional">Occasionally (1-2 times a month)</option>
+                      <option value="weekly">Weekly (1-5 packages a week)</option>
+                      <option value="daily">Daily / High Volume (Multiple packages every day)</option>
+                    </select>
+                  </div>
+
+                  {/* Submit Button */}
+                  <button
+                    type="submit"
+                    disabled={customerSubmitting}
+                    className="w-full bg-[#2D5FE0] hover:bg-[#2D5FE0]/90 disabled:bg-[#2D5FE0]/50 text-white font-bold py-4 rounded-2xl shadow-xl shadow-[#2D5FE0]/20 transition-all flex items-center justify-center gap-2 cursor-pointer text-base"
+                  >
+                    {customerSubmitting ? 'Registering...' : 'Claim $2 Voucher & Register'}
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+                </form>
+              ) : (
+                /* STAGE 2: CUSTOMER SUCCESS & PROMO CODE CARD */
+                <div className="space-y-6 py-2 text-center">
+                  <div className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center mx-auto">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+
+                  <div className="space-y-1">
+                    <h4 className="text-2xl font-black text-[#0B1F4D]">
+                      Welcome, {customerForm.fullName}! 🎉
+                    </h4>
+                    <p className="text-sm text-slate-600 max-w-md mx-auto">
+                      You are now registered for priority parcel delivery in <strong className="text-[#0B1F4D]">{customerForm.city}</strong>.
+                    </p>
+                  </div>
+
+                  {/* Promo Voucher Display */}
+                  <div className="bg-gradient-to-r from-[#2D5FE0]/10 via-[#5B99F2]/15 to-[#2D5FE0]/10 border-2 border-dashed border-[#2D5FE0]/40 p-5 rounded-3xl space-y-2">
+                    <p className="text-xs font-black uppercase tracking-wider text-[#2D5FE0]">Your Welcome Promo Code</p>
+                    <div className="inline-block bg-white text-[#0B1F4D] font-mono text-2xl font-black px-6 py-2 rounded-2xl shadow-xs border border-slate-200 tracking-wider">
+                      WELCOME263
+                    </div>
+                    <p className="text-xs text-slate-500">$2.00 off applied automatically on your first parcel delivery.</p>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="space-y-3">
+                    <a
+                      href={`https://wa.me/263771000000?text=Hello%20ShipMate%20Dispatch%2C%20I%20have%20registered%20with%20code%20WELCOME263%20and%20need%20a%20parcel%20delivered%20in%20${encodeURIComponent(customerForm.city)}.%20My%20name%20is%20${encodeURIComponent(customerForm.fullName)}.`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full bg-[#25D366] hover:bg-[#20ba59] text-white font-bold py-4 rounded-2xl shadow-lg shadow-[#25D366]/20 transition-all flex items-center justify-center gap-2 cursor-pointer text-base"
+                    >
+                      <MessageSquare className="w-5 h-5" />
+                      <span>Book Pickup via WhatsApp Dispatch</span>
+                    </a>
+
+                    <button
+                      onClick={resetCustomerModal}
+                      className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3.5 rounded-2xl transition-colors text-sm cursor-pointer"
+                    >
+                      Done / Close
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 8. INTERACTIVE COURIER APPLICATION & ONBOARDING MODAL */}
       {/* ========================================================================= */}
       {isCourierModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0B1F4D]/75 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">

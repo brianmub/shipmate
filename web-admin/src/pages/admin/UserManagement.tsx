@@ -18,8 +18,27 @@ import {
   Cpu,
   MessageSquare,
   ExternalLink,
-  Award
+  Award,
+  Building,
+  ShoppingBag,
+  Gift,
+  Package
 } from 'lucide-react';
+
+export interface CustomerLead {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  city: string;
+  customer_type: 'personal' | 'business';
+  business_name: string | null;
+  estimated_frequency: string;
+  notes: string | null;
+  promo_code: string;
+  status: 'new' | 'contacted' | 'converted' | 'archived';
+  created_at: string;
+}
 
 export interface CourierApplication {
   id: string;
@@ -109,8 +128,18 @@ export const UserManagement = () => {
   const [newPhone, setNewPhone] = useState('');
   const [newRole, setNewRole] = useState<'customer' | 'driver' | 'admin'>('customer');
 
+  // Main Tab Navigation
+  const [activeMainTab, setActiveMainTab] = useState<'users' | 'leads' | 'applicants'>('users');
+
+  // Customer Leads (Parcel Waitlist) State
+  const [customerLeads, setCustomerLeads] = useState<CustomerLead[]>([]);
+  const [loadingLeads, setLoadingLeads] = useState(false);
+  const [leadSearch, setLeadSearch] = useState('');
+  const [leadCityFilter, setLeadCityFilter] = useState('all');
+  const [leadTypeFilter, setLeadTypeFilter] = useState('all');
+  const [leadStatusFilter, setLeadStatusFilter] = useState('all');
+
   // Courier Applications (Waitlist) State
-  const [activeMainTab, setActiveMainTab] = useState<'users' | 'applicants'>('users');
   const [courierApplications, setCourierApplications] = useState<CourierApplication[]>([]);
   const [loadingApplications, setLoadingApplications] = useState(false);
   const [applicantSearch, setApplicantSearch] = useState('');
@@ -121,7 +150,56 @@ export const UserManagement = () => {
   useEffect(() => {
     fetchUsers();
     fetchCourierApplications();
+    fetchCustomerLeads();
   }, []);
+
+  const fetchCustomerLeads = async () => {
+    try {
+      setLoadingLeads(true);
+      const { data, error } = await supabase
+        .from('customer_leads')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('customer_leads query:', error.message);
+      } else {
+        setCustomerLeads(data || []);
+      }
+    } catch (err: any) {
+      console.warn('Error fetching customer leads:', err);
+    } finally {
+      setLoadingLeads(false);
+    }
+  };
+
+  const handleUpdateLeadStatus = async (id: string, newStatus: 'new' | 'contacted' | 'converted' | 'archived') => {
+    try {
+      const { error } = await supabase
+        .from('customer_leads')
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .eq('id', id);
+
+      if (error) throw error;
+      setCustomerLeads(prev => prev.map(lead => lead.id === id ? { ...lead, status: newStatus } : lead));
+      setSuccessMessage(`Customer lead status updated to: ${newStatus}`);
+      setTimeout(() => setSuccessMessage(''), 3500);
+    } catch (err: any) {
+      alert(`Could not update status: ${err.message}`);
+    }
+  };
+
+  const getCustomerWhatsAppUrl = (phone: string, name: string, city: string, businessName?: string | null) => {
+    let clean = phone.replace(/[^0-9]/g, '');
+    if (clean.startsWith('0')) {
+      clean = '263' + clean.slice(1);
+    } else if (!clean.startsWith('263')) {
+      clean = '263' + clean;
+    }
+    const intro = businessName ? `Hi ${name} (${businessName})` : `Hi ${name}`;
+    const msg = encodeURIComponent(`${intro}! This is ShipMate Parcel Delivery in ${city}. We saw your delivery inquiry with promo code WELCOME263. How can we help you dispatch your first parcel today?`);
+    return `https://wa.me/${clean}?text=${msg}`;
+  };
 
   const fetchCourierApplications = async () => {
     try {
@@ -478,6 +556,24 @@ export const UserManagement = () => {
     return matchesSearch && matchesCity && matchesVehicle && matchesStatus;
   });
 
+  // Filters logic for Customer Leads
+  const filteredLeads = customerLeads.filter((lead) => {
+    const query = leadSearch.toLowerCase();
+    const matchesSearch =
+      query === '' ||
+      (lead.full_name || '').toLowerCase().includes(query) ||
+      (lead.email || '').toLowerCase().includes(query) ||
+      (lead.phone || '').toLowerCase().includes(query) ||
+      (lead.city || '').toLowerCase().includes(query) ||
+      (lead.business_name || '').toLowerCase().includes(query);
+
+    const matchesCity = leadCityFilter === 'all' || lead.city.toLowerCase() === leadCityFilter.toLowerCase();
+    const matchesType = leadTypeFilter === 'all' || lead.customer_type === leadTypeFilter;
+    const matchesStatus = leadStatusFilter === 'all' || lead.status === leadStatusFilter;
+
+    return matchesSearch && matchesCity && matchesType && matchesStatus;
+  });
+
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 p-6 sm:p-8 font-sans">
       <div className="max-w-7xl mx-auto space-y-8">
@@ -487,7 +583,7 @@ export const UserManagement = () => {
           <div>
             <h1 className="text-3xl font-extrabold text-white tracking-tight">User & Fleet Management</h1>
             <p className="text-slate-400 text-sm mt-1">
-              Manage registered accounts, troubleshoot logins, and review new delivery courier applicants from the landing page.
+              Manage registered accounts, troubleshoot logins, customer inquiries, and review new delivery courier applicants.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -512,7 +608,7 @@ export const UserManagement = () => {
         )}
 
         {/* MAIN TAB SWITCHER */}
-        <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 pb-4">
           <button
             onClick={() => setActiveMainTab('users')}
             className={`px-5 py-2.5 rounded-2xl font-bold text-sm transition-all cursor-pointer ${
@@ -523,6 +619,24 @@ export const UserManagement = () => {
           >
             Registered Users ({users.length})
           </button>
+
+          <button
+            onClick={() => setActiveMainTab('leads')}
+            className={`px-5 py-2.5 rounded-2xl font-bold text-sm transition-all cursor-pointer flex items-center gap-2 ${
+              activeMainTab === 'leads'
+                ? 'bg-emerald-500 text-slate-950 font-black shadow-lg shadow-emerald-500/20'
+                : 'bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Package className="w-4 h-4" />
+            <span>Customer Leads & Businesses</span>
+            {customerLeads.length > 0 && (
+              <span className="bg-slate-900/30 text-xs px-2 py-0.5 rounded-full font-bold">
+                {customerLeads.length}
+              </span>
+            )}
+          </button>
+
           <button
             onClick={() => setActiveMainTab('applicants')}
             className={`px-5 py-2.5 rounded-2xl font-bold text-sm transition-all cursor-pointer flex items-center gap-2 ${
@@ -744,9 +858,223 @@ export const UserManagement = () => {
               </div>
             )}
           </>
+        ) : activeMainTab === 'leads' ? (
+          /* ========================================================= */
+          /* TAB 2: CUSTOMER LEADS & BUSINESSES VIEW */
+          /* ========================================================= */
+          <>
+            {/* Quick KPI Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-3xl">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Customer Leads</p>
+                <p className="text-2xl font-black text-white mt-1">{customerLeads.length}</p>
+              </div>
+              <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-3xl">
+                <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Commercial / Shops 🏢</p>
+                <p className="text-2xl font-black text-emerald-400 mt-1">
+                  {customerLeads.filter(l => l.customer_type === 'business').length}
+                </p>
+              </div>
+              <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-3xl">
+                <p className="text-xs font-bold text-sky-400 uppercase tracking-wider">Harare Senders</p>
+                <p className="text-2xl font-black text-sky-400 mt-1">
+                  {customerLeads.filter(l => l.city.toLowerCase() === 'harare').length}
+                </p>
+              </div>
+              <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-3xl">
+                <p className="text-xs font-bold text-amber-400 uppercase tracking-wider">New Inquiries</p>
+                <p className="text-2xl font-black text-amber-400 mt-1">
+                  {customerLeads.filter(l => l.status === 'new').length}
+                </p>
+              </div>
+            </div>
+
+            {/* Leads Filter Bar */}
+            <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-[2rem] flex flex-col md:flex-row items-center gap-4">
+              <div className="relative w-full md:flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Search leads by customer name, store name, email, phone or city..."
+                  value={leadSearch}
+                  onChange={(e) => setLeadSearch(e.target.value)}
+                  className="w-full bg-slate-950/40 border border-slate-850 rounded-2xl py-3 pl-12 pr-4 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 transition-all text-sm font-semibold"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                {/* City Filter */}
+                <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
+                  <Filter className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={leadCityFilter}
+                    onChange={(e) => setLeadCityFilter(e.target.value)}
+                    className="bg-transparent text-slate-350 text-sm font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">All Cities</option>
+                    <option value="Harare">Harare</option>
+                    <option value="Bulawayo">Bulawayo</option>
+                    <option value="Chitungwiza">Chitungwiza</option>
+                    <option value="Mutare">Mutare</option>
+                    <option value="Gweru">Gweru</option>
+                  </select>
+                </div>
+
+                {/* Account Type Filter */}
+                <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
+                  <Filter className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={leadTypeFilter}
+                    onChange={(e) => setLeadTypeFilter(e.target.value)}
+                    className="bg-transparent text-slate-350 text-sm font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">All Types</option>
+                    <option value="personal">Personal 👤</option>
+                    <option value="business">Business 🏢</option>
+                  </select>
+                </div>
+
+                {/* Status Filter */}
+                <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
+                  <Filter className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={leadStatusFilter}
+                    onChange={(e) => setLeadStatusFilter(e.target.value)}
+                    className="bg-transparent text-slate-350 text-sm font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">All Statuses</option>
+                    <option value="new">New</option>
+                    <option value="contacted">Contacted</option>
+                    <option value="converted">Converted</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={fetchCustomerLeads}
+                  className="p-3 bg-slate-850 border border-slate-800 rounded-2xl text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  title="Refresh Leads"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Leads Table */}
+            {loadingLeads ? (
+              <div className="flex flex-col items-center justify-center py-20">
+                <Loader2 className="w-12 h-12 text-emerald-500 animate-spin mb-4" />
+                <p className="text-slate-400 font-semibold">Loading customer leads...</p>
+              </div>
+            ) : filteredLeads.length === 0 ? (
+              <div className="bg-slate-850/20 border border-slate-850 rounded-[2.5rem] py-16 text-center text-slate-450 font-semibold">
+                No customer leads matched the criteria.
+              </div>
+            ) : (
+              <div className="bg-slate-950/20 border border-slate-850 rounded-[2.5rem] overflow-hidden shadow-xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-850/50 border-b border-slate-850 text-xs font-bold uppercase tracking-wider text-slate-400">
+                        <th className="py-5 px-6">Sender & City</th>
+                        <th className="py-5 px-6">Direct Contact & WhatsApp</th>
+                        <th className="py-5 px-6">Account Type & Frequency</th>
+                        <th className="py-5 px-6">Promo Code & Date</th>
+                        <th className="py-5 px-6 text-right">Lead Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850">
+                      {filteredLeads.map((lead) => (
+                        <tr key={lead.id} className="hover:bg-slate-850/10 transition-colors text-sm">
+                          {/* Name & City */}
+                          <td className="py-5 px-6 space-y-1">
+                            <div className="flex items-center gap-2">
+                              <p className="font-extrabold text-white text-base">{lead.full_name}</p>
+                              {lead.customer_type === 'business' && (
+                                <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
+                                  <Building className="w-3 h-3" />
+                                  <span>{lead.business_name || 'Business'}</span>
+                                </span>
+                              )}
+                            </div>
+                            <span className="inline-block bg-slate-800 text-slate-300 text-xs font-bold px-2.5 py-0.5 rounded-md">
+                              📍 {lead.city}
+                            </span>
+                          </td>
+
+                          {/* Contact & WhatsApp */}
+                          <td className="py-5 px-6 space-y-2">
+                            <div className="text-xs text-slate-350 space-y-0.5">
+                              <p className="font-mono text-slate-200">{lead.phone}</p>
+                              <p className="text-slate-400">{lead.email}</p>
+                            </div>
+                            <a
+                              href={getCustomerWhatsAppUrl(lead.phone, lead.full_name, lead.city, lead.business_name)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 border border-[#25D366]/30 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              <span>WhatsApp Lead</span>
+                            </a>
+                          </td>
+
+                          {/* Account Type & Frequency */}
+                          <td className="py-5 px-6 space-y-1 text-xs">
+                            <div className="font-bold text-white uppercase flex items-center gap-1.5">
+                              {lead.customer_type === 'business' ? (
+                                <span className="text-emerald-400 flex items-center gap-1">🏢 Commercial</span>
+                              ) : (
+                                <span className="text-slate-350 flex items-center gap-1">👤 Personal</span>
+                              )}
+                            </div>
+                            <p className="text-slate-400">
+                              Frequency: <span className="text-slate-200 font-semibold">{lead.estimated_frequency}</span>
+                            </p>
+                          </td>
+
+                          {/* Promo Code & Date */}
+                          <td className="py-5 px-6 text-xs text-slate-450 space-y-1">
+                            <span className="inline-block bg-[#2D5FE0]/10 border border-[#2D5FE0]/20 text-[#2D5FE0] font-mono font-bold px-2 py-0.5 rounded-md">
+                              🎁 {lead.promo_code || 'WELCOME263'}
+                            </span>
+                            <p className="text-[11px] text-slate-500">
+                              Joined: {new Date(lead.created_at).toLocaleDateString()}
+                            </p>
+                          </td>
+
+                          {/* Lead Status */}
+                          <td className="py-5 px-6 text-right">
+                            <select
+                              value={lead.status}
+                              onChange={(e) => handleUpdateLeadStatus(lead.id, e.target.value as any)}
+                              className={`text-xs font-extrabold rounded-xl px-3 py-2 border focus:outline-none cursor-pointer ${
+                                lead.status === 'new'
+                                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                                  : lead.status === 'contacted'
+                                  ? 'bg-sky-500/10 border-sky-500/30 text-sky-400'
+                                  : lead.status === 'converted'
+                                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                                  : 'bg-slate-800 border-slate-700 text-slate-400'
+                              }`}
+                            >
+                              <option value="new" className="bg-slate-900 text-amber-400">⭐ New Lead</option>
+                              <option value="contacted" className="bg-slate-900 text-sky-400">💬 Contacted</option>
+                              <option value="converted" className="bg-slate-900 text-emerald-400">✓ Converted</option>
+                              <option value="archived" className="bg-slate-900 text-slate-400">📁 Archived</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
         ) : (
           /* ========================================================= */
-          /* TAB 2: COURIER APPLICANTS & WAITLIST VIEW */
+          /* TAB 3: COURIER APPLICANTS & WAITLIST VIEW */
           /* ========================================================= */
           <>
             {/* Quick KPI Cards */}
