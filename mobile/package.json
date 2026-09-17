@@ -1,17 +1,19 @@
 {
-  "name": "shipmate-mobile",
-  "version": "1.0.0",
+  "name": "shipmateapp",
+  "version": "2.1.0",
   "main": "index.ts",
   "scripts": {
     "start": "npx expo start --clear",
     "android": "npx expo start --android",
-    "ios": "npx expo start --ios"
+    "ios": "npx expo start --ios",
+    "web": "npx expo start --web",
+    "test:full": "ts-node src/scripts/test_everything.ts",
+    "test:clicknpay": "node src/scripts/test_clicknpay.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@react-native-community/datetimepicker": "^8.4.4",
     "@react-navigation/bottom-tabs": "^7.15.5",
-    "@react-navigation/drawer": "^7.9.9",
+    "@react-navigation/drawer": "^7.9.4",
     "@react-navigation/native": "^7.1.33",
     "@react-navigation/native-stack": "^7.14.4",
     "@supabase/supabase-js": "^2.98.0",
@@ -28,8 +30,8 @@
     "expo-status-bar": "~3.0.9",
     "expo-task-manager": "~14.0.9",
     "react": "19.1.0",
+    "react-dom": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-country-picker-modal": "^2.0.0",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-maps": "1.20.1",
     "react-native-reanimated": "~4.1.1",
@@ -37,6 +39,7 @@
     "react-native-screens": "~4.16.0",
     "react-native-signature-canvas": "^5.0.2",
     "react-native-url-polyfill": "^3.0.0",
+    "react-native-web": "^0.21.0",
     "react-native-webview": "13.15.0",
     "react-native-worklets": "0.5.1",
     "react-native-worklets-core": "^1.6.3",

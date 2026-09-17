@@ -3,7 +3,7 @@
     "name": "Shipmate",
     "slug": "shipmate",
     "scheme": "shipmate",
-    "version": "2.0.3",
+    "version": "2.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -15,6 +15,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.shipmate.shipmate",
+      "buildNumber": "21",
       "infoPlist": {
         "UIBackgroundModes": [
           "location"
@@ -27,7 +28,7 @@
     },
     "android": {
       "package": "com.shipmate.shipmate",
-      "versionCode": 20,
+      "versionCode": 21,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
