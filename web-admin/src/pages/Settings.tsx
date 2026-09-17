@@ -17,7 +17,8 @@ export const Settings = () => {
         base_delivery_fee: 5.00,
         per_km_rate: 1.50,
         max_driver_radius: 10,
-        min_payout_threshold: 50.00
+        min_payout_threshold: 50.00,
+        sms_notification_fee: 0.25
     });
     const [aiSettings, setAiSettings] = useState({
         document_verification_enabled: false,
@@ -213,6 +214,13 @@ export const Settings = () => {
                         onChange={(val: any) => setSettings({...settings, per_km_rate: val})}
                         prefix="$"
                         suffix="/ km"
+                    />
+                    <InputField 
+                        label="SMS & WhatsApp Add-on Fee" 
+                        value={settings.sms_notification_fee ?? 0.25}
+                        onChange={(val: any) => setSettings({...settings, sms_notification_fee: val})}
+                        prefix="$"
+                        suffix="USD / order"
                     />
                 </SettingGroup>
 

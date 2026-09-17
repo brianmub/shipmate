@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar, Image } from 'react-native';
+import { View, Text, TextInput, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar, Image, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -10,6 +10,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { aiService } from '../../services/aiService';
 import { userService } from '../../services/userService';
 import { supabase } from '../../utils/supabase';
+import { PaymentMethod } from '../../types';
 
 export const CreateOrderScreen = ({ route, navigation }: any) => {
     const { 
@@ -24,6 +25,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
         serviceType, setServiceType,
         resetOrder
     } = useOrderStore();
+    const { user } = useAuthStore();
 
     // AI States
     const [isScanning, setIsScanning] = useState(false);
@@ -43,6 +45,57 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
     } | null>(null);
     const [validatingPromo, setValidatingPromo] = useState(false);
     const [promoMessage, setPromoMessage] = useState<{ text: string; isError: boolean } | null>(null);
+
+    // Recipient Contact & Opt-in SMS Notification States
+    const [isRecipientSelf, setIsRecipientSelf] = useState(true);
+    const [recipientName, setRecipientName] = useState('');
+    const [recipientPhone, setRecipientPhone] = useState('');
+    const [recipientNotes, setRecipientNotes] = useState('');
+    const [enableSmsUpdates, setEnableSmsUpdates] = useState(false);
+    const [smsFee, setSmsFee] = useState(0.25);
+
+    // Cancellation Debt States
+    const [unsettledDebt, setUnsettledDebt] = useState<number>(0);
+    const [debtModalVisible, setDebtModalVisible] = useState(false);
+    const [settlingDebt, setSettlingDebt] = useState(false);
+    const [debtPaymentMethod, setDebtPaymentMethod] = useState<'ecocash' | 'innbucks'>('ecocash');
+    const [debtPaymentPhone, setDebtPaymentPhone] = useState('');
+
+    useEffect(() => {
+        if (user?.id) {
+            checkCustomerDebt(user.id);
+            setDebtPaymentPhone(user.phone || user.user_metadata?.phone || '');
+        }
+    }, [user?.id]);
+
+    const checkCustomerDebt = async (customerId: string) => {
+        try {
+            const { totalDebt } = await orderService.getCustomerUnsettledDebt(customerId);
+            setUnsettledDebt(totalDebt);
+        } catch (err) {
+            console.warn('Error checking customer debt:', err);
+        }
+    };
+
+    const handleSettleDebt = async () => {
+        if (!user?.id) return;
+        if (!debtPaymentPhone || debtPaymentPhone.trim().length < 6) {
+            Alert.alert('Phone Number Required', 'Please enter a valid phone number for payment.');
+            return;
+        }
+        setSettlingDebt(true);
+        try {
+            const paymentRef = `DEBT-${Date.now()}`;
+            await orderService.settleCancellationDebt(user.id, debtPaymentMethod, paymentRef);
+            setUnsettledDebt(0);
+            setDebtModalVisible(false);
+            Alert.alert('Balance Cleared! 🎉', 'Your cancellation balance has been settled. You can now post new deliveries.');
+        } catch (err: any) {
+            Alert.alert('Payment Error', err?.message || 'Failed to clear cancellation balance.');
+        } finally {
+            setSettlingDebt(false);
+        }
+    };
 
     const handleApplyPromo = async () => {
         const cleanCode = promoCodeInput.trim().toUpperCase();
@@ -150,6 +203,9 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                         base_delivery_fee: parseFloat(data.base_delivery_fee || '5.00'),
                         per_km_rate: parseFloat(data.per_km_rate || '1.50')
                     });
+                    if (data.sms_notification_fee !== undefined && data.sms_notification_fee !== null) {
+                        setSmsFee(parseFloat(data.sms_notification_fee) || 0.25);
+                    }
                 }
             } catch (err) {
                 console.error('Failed to load system settings for pricing:', err);
@@ -188,9 +244,12 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
     }, [pickupCoords, dropoffCoords, errandCoords, serviceType, pricingSettings]);
 
     // Auth & Loading State
-    const { user } = useAuthStore();
     const [loading, setLoading] = useState(false);
     const [showErrors, setShowErrors] = useState(false);
+
+    // Payment Selection State
+    const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash_on_delivery');
+    const [paymentPhone, setPaymentPhone] = useState(user?.phone || user?.user_metadata?.phone || '');
 
     const isDelivery = serviceType === 'delivery';
 
@@ -318,6 +377,18 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
             return;
         }
 
+        if (unsettledDebt > 0) {
+            Alert.alert(
+                'Outstanding Balance',
+                `You have an unsettled cancellation balance of $${unsettledDebt.toFixed(2)} USD from a previous delivery. Please clear this balance before requesting a new Mate.`,
+                [
+                    { text: 'Clear Balance Now', onPress: () => setDebtModalVisible(true) },
+                    { text: 'Cancel', style: 'cancel' }
+                ]
+            );
+            return;
+        }
+
         setLoading(true);
         setShowErrors(false);
         try {
@@ -325,7 +396,27 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
 
             const grossAmount = offerAmount;
             const discountAmount = appliedVoucher ? Math.min(appliedVoucher.discount, grossAmount) : 0;
-            const finalPayable = Math.max(0.50, Math.round((grossAmount - discountAmount) * 100) / 100);
+            const smsAddonFee = enableSmsUpdates ? smsFee : 0;
+            const finalPayable = Math.max(0.50, Math.round((grossAmount - discountAmount + smsAddonFee) * 100) / 100);
+
+            if ((paymentMethod === 'ecocash' || paymentMethod === 'innbucks') && (!paymentPhone || paymentPhone.trim().length < 6)) {
+                Alert.alert('Missing Mobile Number', `Please enter a valid ${paymentMethod === 'ecocash' ? 'EcoCash' : 'InnBucks'} mobile number.`);
+                setLoading(false);
+                return;
+            }
+
+            if (enableSmsUpdates) {
+                const phoneForSms = !isRecipientSelf ? recipientPhone : (paymentPhone || user?.phone || user?.user_metadata?.phone);
+                if (!phoneForSms || phoneForSms.trim().length < 6) {
+                    Alert.alert('Mobile Number Required', 'Please enter a valid phone number for the recipient to receive SMS & WhatsApp milestone updates.');
+                    setLoading(false);
+                    return;
+                }
+            }
+
+            const isCod = paymentMethod === 'cash_on_delivery';
+            const cashToCollect = isCod ? finalPayable : 0.00;
+            const paymentStatus = isCod ? 'unpaid' : 'paid';
 
             const createdOrder = await orderService.createOrder({
                 customer_id: user.id,
@@ -345,7 +436,16 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                 estimated_cost: finalPayable,
                 gross_amount: grossAmount,
                 discount_amount: discountAmount,
-                promo_code: appliedVoucher?.code || null
+                promo_code: appliedVoucher?.code || null,
+                payment_method: paymentMethod,
+                payment_status: paymentStatus,
+                cash_to_collect: cashToCollect,
+                payment_phone: paymentPhone ? paymentPhone.trim() : null,
+                recipient_name: !isRecipientSelf && recipientName.trim() ? recipientName.trim() : (user?.user_metadata?.name || user?.email || 'Customer'),
+                recipient_phone: !isRecipientSelf && recipientPhone.trim() ? recipientPhone.trim() : (paymentPhone || user?.phone || user?.user_metadata?.phone || null),
+                recipient_notes: recipientNotes.trim() ? recipientNotes.trim() : null,
+                sms_notifications_enabled: enableSmsUpdates,
+                sms_notification_fee: smsAddonFee
             });
 
             // Record voucher redemption in background
@@ -371,6 +471,13 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
             }
 
             resetOrder();
+            setIsRecipientSelf(true);
+            setRecipientName('');
+            setRecipientPhone('');
+            setRecipientNotes('');
+            setEnableSmsUpdates(false);
+            setPaymentMethod('cash_on_delivery');
+            setPaymentPhone(user?.phone || user?.user_metadata?.phone || '');
             setAppliedVoucher(null);
             setPromoCodeInput('');
             setPromoMessage(null);
@@ -402,8 +509,18 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
             setDropoff('My Apartment, 789 Red St', { latitude: 37.7800, longitude: -122.4100 });
             setErrandInstructions('- Milk\n- Bread\n- Fresh Apples');
         }
+        setIsRecipientSelf(false);
+        setRecipientName('Farai Gumbo');
+        setRecipientPhone('+263772987654');
+        setRecipientNotes('Ring buzzer 4B at the front security gate');
+        setEnableSmsUpdates(true);
         setShowErrors(false);
     };
+
+    const currentFare = parseFloat(bidPrice) || estimatedCost;
+    const currentDiscount = appliedVoucher ? Math.min(appliedVoucher.discount, currentFare) : 0;
+    const currentSmsFee = enableSmsUpdates ? smsFee : 0;
+    const currentTotalPayable = Math.max(0.50, Math.round((currentFare - currentDiscount + currentSmsFee) * 100) / 100);
 
     return (
         <LinearGradient
@@ -423,6 +540,27 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                             <Text style={styles.header}>New {isDelivery ? 'Delivery' : 'Errand'}</Text>
                             <Text style={styles.subHeader}>Fill out the details below</Text>
                         </View>
+
+                        {unsettledDebt > 0 && (
+                            <View style={styles.debtBanner}>
+                                <View style={styles.debtBannerTop}>
+                                    <Text style={styles.debtBannerIcon}>⚠️</Text>
+                                    <View style={styles.debtBannerTextWrap}>
+                                        <Text style={styles.debtBannerTitle}>Unsettled Cancellation Fee</Text>
+                                        <Text style={styles.debtBannerDesc}>
+                                            You have an outstanding balance of ${unsettledDebt.toFixed(2)} USD from a previous cancellation. Please clear this to post a new request.
+                                        </Text>
+                                    </View>
+                                </View>
+                                <TouchableOpacity
+                                    style={styles.debtBannerActionBtn}
+                                    activeOpacity={0.8}
+                                    onPress={() => setDebtModalVisible(true)}
+                                >
+                                    <Text style={styles.debtBannerActionText}>Clear Balance (${unsettledDebt.toFixed(2)})</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
 
                         <BlurView intensity={20} tint="light" style={styles.formCard}>
                             {isDelivery ? (
@@ -585,6 +723,234 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                             )}
                         </BlurView>
 
+                        {/* Recipient Details Card */}
+                        <BlurView intensity={20} tint="light" style={styles.formCard}>
+                            <View style={styles.formSection}>
+                                <View style={styles.sectionHeader}>
+                                    <Text style={styles.sectionIcon}>👤</Text>
+                                    <Text style={styles.sectionTitle}>Recipient & Delivery Contact</Text>
+                                </View>
+                                <Text style={styles.paymentSubTitle}>Who will receive this package upon arrival?</Text>
+
+                                <View style={styles.tabToggleRow}>
+                                    <TouchableOpacity
+                                        style={[styles.tabToggleButton, isRecipientSelf && styles.tabToggleButtonActive]}
+                                        onPress={() => setIsRecipientSelf(true)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={[styles.tabToggleText, isRecipientSelf && styles.tabToggleTextActive]}>
+                                            🙋 I'll Receive It
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.tabToggleButton, !isRecipientSelf && styles.tabToggleButtonActive]}
+                                        onPress={() => setIsRecipientSelf(false)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={[styles.tabToggleText, !isRecipientSelf && styles.tabToggleTextActive]}>
+                                            👥 Someone Else
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                {!isRecipientSelf ? (
+                                    <View style={styles.recipientFieldsWrap}>
+                                        <Text style={styles.label}>Recipient's Full Name</Text>
+                                        <TextInput
+                                            style={styles.input}
+                                            placeholder="e.g. Tendai Moyo"
+                                            placeholderTextColor="#94A3B8"
+                                            value={recipientName}
+                                            onChangeText={setRecipientName}
+                                            selectionColor="#055FEE"
+                                        />
+
+                                        <Text style={[styles.label, { marginTop: 12 }]}>Recipient's Phone Number</Text>
+                                        <TextInput
+                                            style={styles.input}
+                                            placeholder="e.g. +263 77 123 4567"
+                                            placeholderTextColor="#94A3B8"
+                                            value={recipientPhone}
+                                            onChangeText={setRecipientPhone}
+                                            keyboardType="phone-pad"
+                                            selectionColor="#055FEE"
+                                        />
+
+                                        <Text style={[styles.label, { marginTop: 12 }]}>Gate / Delivery Instructions</Text>
+                                        <TextInput
+                                            style={[styles.input, { height: 75, textAlignVertical: 'top' }]}
+                                            placeholder="e.g. Gate code #4021, buzz 2B, or call upon arrival"
+                                            placeholderTextColor="#94A3B8"
+                                            value={recipientNotes}
+                                            onChangeText={setRecipientNotes}
+                                            multiline
+                                            selectionColor="#055FEE"
+                                        />
+                                    </View>
+                                ) : (
+                                    <View style={styles.selfRecipientInfo}>
+                                        <Text style={styles.selfRecipientInfoText}>
+                                            ✓ Courier will contact you directly at: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{user?.phone || user?.user_metadata?.phone || 'Your registered account'}</Text>
+                                        </Text>
+                                    </View>
+                                )}
+                            </View>
+                        </BlurView>
+
+                        {/* Opt-in SMS & WhatsApp Alerts Card */}
+                        <BlurView intensity={20} tint="light" style={styles.formCard}>
+                            <View style={styles.formSection}>
+                                <View style={styles.sectionHeader}>
+                                    <Text style={styles.sectionIcon}>📲</Text>
+                                    <Text style={styles.sectionTitle}>Live SMS & WhatsApp Alerts</Text>
+                                </View>
+                                
+                                <View style={styles.smsHeaderRow}>
+                                    <View style={styles.smsPricePill}>
+                                        <Text style={styles.smsPricePillText}>+${smsFee.toFixed(2)} USD</Text>
+                                    </View>
+                                    <Text style={styles.smsTagFreeBadge}>In-App Tracking is 100% FREE</Text>
+                                </View>
+                                
+                                <Text style={styles.smsExplainerText}>
+                                    Push notifications and live map tracking are always free. If your recipient doesn't have the ShipMate app or has mobile data turned off, opt in for automatic SMS and WhatsApp arrival alerts at their gate!
+                                </Text>
+
+                                <TouchableOpacity
+                                    style={[styles.smsToggleCard, enableSmsUpdates && styles.smsToggleCardActive]}
+                                    activeOpacity={0.8}
+                                    onPress={() => setEnableSmsUpdates(!enableSmsUpdates)}
+                                >
+                                    <View style={styles.smsToggleRow}>
+                                        <View style={[styles.smsCheckbox, enableSmsUpdates && styles.smsCheckboxActive]}>
+                                            {enableSmsUpdates && <Text style={styles.smsCheckmark}>✓</Text>}
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={[styles.smsToggleTitle, enableSmsUpdates && styles.smsToggleTitleActive]}>
+                                                {enableSmsUpdates ? '✓ SMS & WhatsApp Alerts Enabled' : 'Opt In for SMS & WhatsApp Alerts'}
+                                            </Text>
+                                            <Text style={styles.smsToggleDesc}>
+                                                {enableSmsUpdates 
+                                                    ? `Direct telco SMS & WhatsApp alerts will ping the recipient (+ $${smsFee.toFixed(2)})`
+                                                    : `Only +$${smsFee.toFixed(2)} USD added to your delivery total`}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                </TouchableOpacity>
+                            </View>
+                        </BlurView>
+
+                        {/* Payment Method Selector Card */}
+                        <BlurView intensity={20} tint="light" style={styles.formCard}>
+                            <View style={styles.formSection}>
+                                <View style={styles.sectionHeader}>
+                                    <Text style={styles.sectionIcon}>💳</Text>
+                                    <Text style={styles.sectionTitle}>Payment Method</Text>
+                                </View>
+                                <Text style={styles.paymentSubTitle}>Choose how you want to settle this delivery</Text>
+
+                                <View style={styles.paymentOptionsGrid}>
+                                    {/* Cash on Delivery */}
+                                    <TouchableOpacity
+                                        style={[styles.paymentOptionCard, paymentMethod === 'cash_on_delivery' && styles.paymentOptionCardActive]}
+                                        activeOpacity={0.7}
+                                        onPress={() => setPaymentMethod('cash_on_delivery')}
+                                    >
+                                        <View style={styles.paymentOptionContent}>
+                                            <Text style={styles.paymentOptionEmoji}>💵</Text>
+                                            <View style={styles.paymentOptionTextWrap}>
+                                                <Text style={[styles.paymentOptionTitle, paymentMethod === 'cash_on_delivery' && styles.paymentOptionTitleActive]}>
+                                                    Cash on Delivery
+                                                </Text>
+                                                <Text style={styles.paymentOptionDesc}>Pay physical USD/ZiG cash directly to courier</Text>
+                                            </View>
+                                            <View style={[styles.paymentRadio, paymentMethod === 'cash_on_delivery' && styles.paymentRadioActive]}>
+                                                {paymentMethod === 'cash_on_delivery' && <View style={styles.paymentRadioDot} />}
+                                            </View>
+                                        </View>
+                                    </TouchableOpacity>
+
+                                    {/* EcoCash Mobile Money */}
+                                    <TouchableOpacity
+                                        style={[styles.paymentOptionCard, paymentMethod === 'ecocash' && styles.paymentOptionCardActive]}
+                                        activeOpacity={0.7}
+                                        onPress={() => setPaymentMethod('ecocash')}
+                                    >
+                                        <View style={styles.paymentOptionContent}>
+                                            <Text style={styles.paymentOptionEmoji}>📱</Text>
+                                            <View style={styles.paymentOptionTextWrap}>
+                                                <Text style={[styles.paymentOptionTitle, paymentMethod === 'ecocash' && styles.paymentOptionTitleActive]}>
+                                                    EcoCash
+                                                </Text>
+                                                <Text style={styles.paymentOptionDesc}>Instant mobile money payment prompt</Text>
+                                            </View>
+                                            <View style={[styles.paymentRadio, paymentMethod === 'ecocash' && styles.paymentRadioActive]}>
+                                                {paymentMethod === 'ecocash' && <View style={styles.paymentRadioDot} />}
+                                            </View>
+                                        </View>
+                                    </TouchableOpacity>
+
+                                    {/* InnBucks */}
+                                    <TouchableOpacity
+                                        style={[styles.paymentOptionCard, paymentMethod === 'innbucks' && styles.paymentOptionCardActive]}
+                                        activeOpacity={0.7}
+                                        onPress={() => setPaymentMethod('innbucks')}
+                                    >
+                                        <View style={styles.paymentOptionContent}>
+                                            <Text style={styles.paymentOptionEmoji}>⚡</Text>
+                                            <View style={styles.paymentOptionTextWrap}>
+                                                <Text style={[styles.paymentOptionTitle, paymentMethod === 'innbucks' && styles.paymentOptionTitleActive]}>
+                                                    InnBucks
+                                                </Text>
+                                                <Text style={styles.paymentOptionDesc}>Direct payment from InnBucks account</Text>
+                                            </View>
+                                            <View style={[styles.paymentRadio, paymentMethod === 'innbucks' && styles.paymentRadioActive]}>
+                                                {paymentMethod === 'innbucks' && <View style={styles.paymentRadioDot} />}
+                                            </View>
+                                        </View>
+                                    </TouchableOpacity>
+
+                                    {/* Card */}
+                                    <TouchableOpacity
+                                        style={[styles.paymentOptionCard, paymentMethod === 'card' && styles.paymentOptionCardActive]}
+                                        activeOpacity={0.7}
+                                        onPress={() => setPaymentMethod('card')}
+                                    >
+                                        <View style={styles.paymentOptionContent}>
+                                            <Text style={styles.paymentOptionEmoji}>💳</Text>
+                                            <View style={styles.paymentOptionTextWrap}>
+                                                <Text style={[styles.paymentOptionTitle, paymentMethod === 'card' && styles.paymentOptionTitleActive]}>
+                                                    Card / Online
+                                                </Text>
+                                                <Text style={styles.paymentOptionDesc}>Pay securely with Visa or Mastercard</Text>
+                                            </View>
+                                            <View style={[styles.paymentRadio, paymentMethod === 'card' && styles.paymentRadioActive]}>
+                                                {paymentMethod === 'card' && <View style={styles.paymentRadioDot} />}
+                                            </View>
+                                        </View>
+                                    </TouchableOpacity>
+                                </View>
+
+                                {/* Mobile Money Phone Input */}
+                                {(paymentMethod === 'ecocash' || paymentMethod === 'innbucks') && (
+                                    <View style={styles.paymentPhoneBox}>
+                                        <Text style={styles.label}>
+                                            {paymentMethod === 'ecocash' ? 'EcoCash Phone Number' : 'InnBucks Registered Mobile'}
+                                        </Text>
+                                        <TextInput
+                                            style={styles.input}
+                                            placeholder="e.g. 0772123456"
+                                            placeholderTextColor="#94A3B8"
+                                            value={paymentPhone}
+                                            onChangeText={setPaymentPhone}
+                                            keyboardType="phone-pad"
+                                            selectionColor="#055FEE"
+                                        />
+                                    </View>
+                                )}
+                            </View>
+                        </BlurView>
+
                         <View style={styles.summarySection}>
                             {/* Promo Code Input Section */}
                             <View style={styles.promoSection}>
@@ -674,14 +1040,28 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                     <View style={styles.bidDivider} />
                                     <View style={styles.summaryRow}>
                                         <Text style={styles.summaryLabel}>Subtotal Fare:</Text>
-                                        <Text style={styles.summaryText}>${(parseFloat(bidPrice) || estimatedCost).toFixed(2)}</Text>
+                                        <Text style={styles.summaryText}>${currentFare.toFixed(2)}</Text>
                                     </View>
                                     <View style={styles.summaryRow}>
                                         <Text style={[styles.summaryLabel, { color: '#10B981', fontWeight: '700' }]}>
                                             Voucher ({appliedVoucher.code}):
                                         </Text>
                                         <Text style={[styles.summaryText, { color: '#10B981', fontWeight: '800' }]}>
-                                            -${appliedVoucher.discount.toFixed(2)}
+                                            -${currentDiscount.toFixed(2)}
+                                        </Text>
+                                    </View>
+                                </>
+                            )}
+
+                            {enableSmsUpdates && (
+                                <>
+                                    {!appliedVoucher && <View style={styles.bidDivider} />}
+                                    <View style={styles.summaryRow}>
+                                        <Text style={[styles.summaryLabel, { color: '#055FEE', fontWeight: '600' }]}>
+                                            📲 SMS & WhatsApp Add-on:
+                                        </Text>
+                                        <Text style={[styles.summaryText, { color: '#055FEE', fontWeight: '700' }]}>
+                                            +${smsFee.toFixed(2)}
                                         </Text>
                                     </View>
                                 </>
@@ -692,15 +1072,38 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Total to Pay:</Text>
                                 <Text style={[styles.summaryTitle, { color: appliedVoucher ? '#10B981' : '#055FEE' }]}>
-                                    ${appliedVoucher 
-                                        ? Math.max(0.50, ((parseFloat(bidPrice) || estimatedCost) - appliedVoucher.discount)).toFixed(2)
-                                        : (parseFloat(bidPrice) || estimatedCost).toFixed(2)}
+                                    ${currentTotalPayable.toFixed(2)}
                                 </Text>
                             </View>
 
                             <View style={styles.summaryRow}>
                                 <Text style={styles.summaryLabel}>Payment Method:</Text>
-                                <Text style={styles.summaryText}>Cash on Delivery</Text>
+                                <Text style={[styles.summaryText, { fontWeight: '700', color: paymentMethod === 'cash_on_delivery' ? '#D97706' : '#055FEE' }]}>
+                                    {paymentMethod === 'cash_on_delivery' 
+                                        ? '💵 Cash on Delivery' 
+                                        : paymentMethod === 'ecocash'
+                                        ? '📱 EcoCash Mobile Money'
+                                        : paymentMethod === 'innbucks'
+                                        ? '⚡ InnBucks Digital'
+                                        : '💳 Card Payment'}
+                                </Text>
+                            </View>
+
+                            {/* Payment Directive Banner for Customer */}
+                            <View style={[styles.customerPaymentBanner, paymentMethod === 'cash_on_delivery' ? styles.customerPaymentBannerCod : styles.customerPaymentBannerDigital]}>
+                                <Text style={styles.customerPaymentBannerIcon}>
+                                    {paymentMethod === 'cash_on_delivery' ? '💵' : '✅'}
+                                </Text>
+                                <View style={styles.customerPaymentBannerTextWrap}>
+                                    <Text style={[styles.customerPaymentBannerTitle, paymentMethod === 'cash_on_delivery' ? styles.customerPaymentBannerTitleCod : styles.customerPaymentBannerTitleDigital]}>
+                                        {paymentMethod === 'cash_on_delivery' ? 'Prepare Cash for Courier' : 'Digital Payment Selected'}
+                                    </Text>
+                                    <Text style={styles.customerPaymentBannerDesc}>
+                                        {paymentMethod === 'cash_on_delivery'
+                                            ? `Please have $${currentTotalPayable.toFixed(2)} USD ready for your courier upon delivery.`
+                                            : 'Payment is processed digitally. Do NOT give physical cash to your courier.'}
+                                    </Text>
+                                </View>
                             </View>
                         </View>
 
@@ -736,6 +1139,70 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
 
                     </ScrollView>
                 </KeyboardAvoidingView>
+
+                {/* Debt Clearance Modal */}
+                <Modal
+                    visible={debtModalVisible}
+                    transparent
+                    animationType="slide"
+                    onRequestClose={() => setDebtModalVisible(false)}
+                >
+                    <View style={styles.debtModalOverlay}>
+                        <View style={styles.debtModalCard}>
+                            <View style={styles.debtModalHeader}>
+                                <Text style={styles.debtModalTitle}>Clear Outstanding Balance</Text>
+                                <TouchableOpacity onPress={() => setDebtModalVisible(false)}>
+                                    <Text style={styles.debtModalClose}>✕</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <Text style={styles.debtModalAmount}>
+                                ${unsettledDebt.toFixed(2)} <Text style={styles.debtModalCurrency}>USD</Text>
+                            </Text>
+                            <Text style={styles.debtModalExplainer}>
+                                This fee was incurred from a previous courier cancellation based on distance traveled. Clearing this settles your account immediately.
+                            </Text>
+
+                            <Text style={styles.debtPaymentLabel}>Select Mobile Money Provider:</Text>
+                            <View style={styles.debtPaymentOptions}>
+                                <TouchableOpacity
+                                    style={[styles.debtProviderBtn, debtPaymentMethod === 'ecocash' && styles.debtProviderBtnActive]}
+                                    onPress={() => setDebtPaymentMethod('ecocash')}
+                                >
+                                    <Text style={[styles.debtProviderText, debtPaymentMethod === 'ecocash' && styles.debtProviderTextActive]}>📱 EcoCash</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.debtProviderBtn, debtPaymentMethod === 'innbucks' && styles.debtProviderBtnActive]}
+                                    onPress={() => setDebtPaymentMethod('innbucks')}
+                                >
+                                    <Text style={[styles.debtProviderText, debtPaymentMethod === 'innbucks' && styles.debtProviderTextActive]}>⚡ InnBucks</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <Text style={styles.debtPaymentLabel}>Mobile Number:</Text>
+                            <TextInput
+                                style={styles.debtPhoneInput}
+                                placeholder="e.g. 0771234567"
+                                placeholderTextColor="#94A3B8"
+                                value={debtPaymentPhone}
+                                onChangeText={setDebtPaymentPhone}
+                                keyboardType="phone-pad"
+                            />
+
+                            <TouchableOpacity
+                                style={styles.debtSettleBtn}
+                                onPress={handleSettleDebt}
+                                disabled={settlingDebt}
+                            >
+                                {settlingDebt ? (
+                                    <ActivityIndicator color="#FFFFFF" />
+                                ) : (
+                                    <Text style={styles.debtSettleBtnText}>Pay & Clear ${unsettledDebt.toFixed(2)} USD</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
             </SafeAreaView>
         </LinearGradient>
     );
@@ -769,6 +1236,154 @@ const styles = StyleSheet.create({
     subHeader: {
         fontSize: 16,
         color: '#64748B',
+    },
+    debtBanner: {
+        backgroundColor: '#FFFBEB',
+        borderWidth: 1.5,
+        borderColor: '#F59E0B',
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 20,
+    },
+    debtBannerTop: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 12,
+        marginBottom: 12,
+    },
+    debtBannerIcon: {
+        fontSize: 24,
+    },
+    debtBannerTextWrap: {
+        flex: 1,
+    },
+    debtBannerTitle: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#92400E',
+        marginBottom: 4,
+    },
+    debtBannerDesc: {
+        fontSize: 13,
+        color: '#B45309',
+        lineHeight: 18,
+    },
+    debtBannerActionBtn: {
+        backgroundColor: '#D97706',
+        borderRadius: 10,
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        alignItems: 'center',
+    },
+    debtBannerActionText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    debtModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        justifyContent: 'center',
+        padding: 24,
+    },
+    debtModalCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 24,
+        padding: 24,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.25,
+        shadowRadius: 20,
+        elevation: 10,
+    },
+    debtModalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    debtModalTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    debtModalClose: {
+        fontSize: 20,
+        color: '#94A3B8',
+        fontWeight: '700',
+    },
+    debtModalAmount: {
+        fontSize: 36,
+        fontWeight: '900',
+        color: '#DC2626',
+        textAlign: 'center',
+        marginBottom: 8,
+    },
+    debtModalCurrency: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: '#64748B',
+    },
+    debtModalExplainer: {
+        fontSize: 13,
+        color: '#64748B',
+        textAlign: 'center',
+        lineHeight: 18,
+        marginBottom: 20,
+    },
+    debtPaymentLabel: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#334155',
+        marginBottom: 8,
+    },
+    debtPaymentOptions: {
+        flexDirection: 'row',
+        gap: 12,
+        marginBottom: 16,
+    },
+    debtProviderBtn: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 12,
+        borderWidth: 1.5,
+        borderColor: '#E2E8F0',
+        alignItems: 'center',
+        backgroundColor: '#F8FAFC',
+    },
+    debtProviderBtnActive: {
+        borderColor: '#055FEE',
+        backgroundColor: '#EFF6FF',
+    },
+    debtProviderText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#64748B',
+    },
+    debtProviderTextActive: {
+        color: '#055FEE',
+    },
+    debtPhoneInput: {
+        backgroundColor: '#F8FAFC',
+        borderWidth: 1.5,
+        borderColor: '#E2E8F0',
+        borderRadius: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        fontSize: 15,
+        color: '#0F172A',
+        marginBottom: 24,
+    },
+    debtSettleBtn: {
+        backgroundColor: '#055FEE',
+        borderRadius: 14,
+        paddingVertical: 16,
+        alignItems: 'center',
+    },
+    debtSettleBtnText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: '800',
     },
     formCard: {
         borderRadius: 24,
@@ -1154,5 +1769,249 @@ const styles = StyleSheet.create({
     },
     promoSuccessText: {
         color: '#10B981',
+    },
+    // Payment Method Styles
+    paymentSubTitle: {
+        fontSize: 13,
+        color: '#64748B',
+        marginBottom: 14,
+        fontWeight: '500',
+    },
+    paymentOptionsGrid: {
+        gap: 10,
+        marginBottom: 8,
+    },
+    paymentOptionCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        padding: 14,
+        borderWidth: 1.5,
+        borderColor: 'rgba(0,0,0,0.06)',
+    },
+    paymentOptionCardActive: {
+        borderColor: '#055FEE',
+        backgroundColor: '#F0F7FF',
+    },
+    paymentOptionContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    paymentOptionEmoji: {
+        fontSize: 24,
+        marginRight: 12,
+    },
+    paymentOptionTextWrap: {
+        flex: 1,
+    },
+    paymentOptionTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#1E293B',
+        marginBottom: 2,
+    },
+    paymentOptionTitleActive: {
+        color: '#055FEE',
+    },
+    paymentOptionDesc: {
+        fontSize: 12,
+        color: '#64748B',
+    },
+    paymentRadio: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        borderWidth: 2,
+        borderColor: '#CBD5E1',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 8,
+    },
+    paymentRadioActive: {
+        borderColor: '#055FEE',
+    },
+    paymentRadioDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#055FEE',
+    },
+    paymentPhoneBox: {
+        marginTop: 12,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(0,0,0,0.06)',
+    },
+    customerPaymentBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 14,
+        borderRadius: 16,
+        marginTop: 16,
+        gap: 12,
+    },
+    customerPaymentBannerCod: {
+        backgroundColor: '#FEF3C7',
+        borderWidth: 1,
+        borderColor: '#F59E0B',
+    },
+    customerPaymentBannerDigital: {
+        backgroundColor: '#ECFDF5',
+        borderWidth: 1,
+        borderColor: '#10B981',
+    },
+    customerPaymentBannerIcon: {
+        fontSize: 24,
+    },
+    customerPaymentBannerTextWrap: {
+        flex: 1,
+    },
+    customerPaymentBannerTitle: {
+        fontSize: 14,
+        fontWeight: '800',
+        marginBottom: 2,
+    },
+    customerPaymentBannerTitleCod: {
+        color: '#B45309',
+    },
+    customerPaymentBannerTitleDigital: {
+        color: '#065F46',
+    },
+    customerPaymentBannerDesc: {
+        fontSize: 12,
+        color: '#475569',
+        lineHeight: 16,
+    },
+    // Recipient Selector Styles
+    tabToggleRow: {
+        flexDirection: 'row',
+        backgroundColor: '#F1F5F9',
+        borderRadius: 14,
+        padding: 4,
+        marginBottom: 16,
+        gap: 6,
+    },
+    tabToggleButton: {
+        flex: 1,
+        paddingVertical: 10,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    tabToggleButtonActive: {
+        backgroundColor: '#FFFFFF',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        elevation: 1,
+    },
+    tabToggleText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#64748B',
+    },
+    tabToggleTextActive: {
+        color: '#055FEE',
+        fontWeight: '700',
+    },
+    recipientFieldsWrap: {
+        gap: 4,
+    },
+    selfRecipientInfo: {
+        backgroundColor: 'rgba(5, 95, 238, 0.06)',
+        padding: 14,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(5, 95, 238, 0.15)',
+    },
+    selfRecipientInfoText: {
+        fontSize: 13,
+        color: '#334155',
+        lineHeight: 18,
+    },
+    // SMS & WhatsApp Opt-in Card Styles
+    smsHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    smsPricePill: {
+        backgroundColor: '#FEF3C7',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#FDE68A',
+    },
+    smsPricePillText: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#B45309',
+    },
+    smsTagFreeBadge: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#059669',
+        backgroundColor: '#D1FAE5',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 8,
+    },
+    smsExplainerText: {
+        fontSize: 12,
+        color: '#64748B',
+        lineHeight: 17,
+        marginBottom: 14,
+    },
+    smsToggleCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        padding: 14,
+        borderWidth: 1.5,
+        borderColor: 'rgba(0,0,0,0.06)',
+    },
+    smsToggleCardActive: {
+        borderColor: '#10B981',
+        backgroundColor: '#F0FDF4',
+    },
+    smsToggleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    smsCheckbox: {
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        borderWidth: 2,
+        borderColor: '#CBD5E1',
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+    },
+    smsCheckboxActive: {
+        borderColor: '#10B981',
+        backgroundColor: '#10B981',
+    },
+    smsCheckmark: {
+        color: '#FFFFFF',
+        fontSize: 13,
+        fontWeight: '900',
+    },
+    smsToggleTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#1E293B',
+        marginBottom: 2,
+    },
+    smsToggleTitleActive: {
+        color: '#047857',
+    },
+    smsToggleDesc: {
+        fontSize: 12,
+        color: '#64748B',
     },
 });

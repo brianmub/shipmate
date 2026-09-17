@@ -6,6 +6,7 @@ export interface ChatMessage {
     sender_id: string;
     message_text: string;
     created_at: string;
+    is_read?: boolean;
 }
 
 export const chatService = {
@@ -53,5 +54,40 @@ export const chatService = {
                 callback
             )
             .subscribe();
+    },
+
+    /**
+     * Get unread message count for an order for a specific user
+     */
+    async getUnreadCount(orderId: string, currentUserId: string): Promise<number> {
+        try {
+            const { count, error } = await supabase
+                .from('order_messages')
+                .select('*', { count: 'exact', head: true })
+                .eq('order_id', orderId)
+                .neq('sender_id', currentUserId)
+                .eq('is_read', false);
+
+            if (error) return 0;
+            return count || 0;
+        } catch {
+            return 0;
+        }
+    },
+
+    /**
+     * Mark all unread messages in an order as read for the current user
+     */
+    async markAsRead(orderId: string, currentUserId: string): Promise<void> {
+        try {
+            await supabase
+                .from('order_messages')
+                .update({ is_read: true })
+                .eq('order_id', orderId)
+                .neq('sender_id', currentUserId)
+                .eq('is_read', false);
+        } catch (e) {
+            console.error('Error marking messages as read:', e);
+        }
     }
 };

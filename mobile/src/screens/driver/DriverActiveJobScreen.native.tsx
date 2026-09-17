@@ -1,16 +1,18 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, StatusBar, Platform, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, StatusBar, Platform, Linking, Modal, TextInput, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { orderService } from '../../services/orderService';
+import { chatService } from '../../services/chatService';
 
 import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../utils/supabase';
 import { ProofOfDeliveryModal } from '../../components/ProofOfDeliveryModal';
-import { OrderStatus } from '../../types';
+import { OrderStatus, OrderReleaseReason, MaskedCallLog } from '../../types';
+import { startCourierBackgroundLocation, stopCourierBackgroundLocation } from '../../utils/backgroundLocation';
 
 export const DriverActiveJobScreen = ({ navigation }: any) => {
     const { user } = useAuthStore();
@@ -18,7 +20,25 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
     const [loading, setLoading] = useState(true);
     const [driverLocation, setDriverLocation] = useState<Location.LocationObject | null>(null);
     const [podVisible, setPodVisible] = useState(false);
+    const [unreadChatCount, setUnreadChatCount] = useState(0);
     const locationSubscription = useRef<Location.LocationSubscription | null>(null);
+
+    // Handover PIN (OTP) Confirmation States
+    const [pinModalVisible, setPinModalVisible] = useState(false);
+    const [enteredPin, setEnteredPin] = useState('');
+    const [verifyingPin, setVerifyingPin] = useState(false);
+    const [pinError, setPinError] = useState<string | null>(null);
+
+    // Release & Anti-Abuse States
+    const [releaseModalVisible, setReleaseModalVisible] = useState(false);
+    const [releaseReason, setReleaseReason] = useState<OrderReleaseReason>('mechanical_issue');
+    const [releasing, setReleasing] = useState(false);
+    const [timerSecondsLeft, setTimerSecondsLeft] = useState<number | null>(null);
+    const [startingTimer, setStartingTimer] = useState(false);
+    const [callAttempts, setCallAttempts] = useState<MaskedCallLog[]>([]);
+    const [lastCallTimestamp, setLastCallTimestamp] = useState<number | null>(null);
+    const [secondsUntilNextCallAllowed, setSecondsUntilNextCallAllowed] = useState<number>(0);
+    const [proposedCompensation, setProposedCompensation] = useState<string>('0.50');
 
     const fetchActiveJob = async () => {
         if (!user) return;
@@ -40,6 +60,14 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
             return;
         }
 
+        // 1. Activate TaskManager background location tracking so navigation apps do not pause GPS updates
+        try {
+            await startCourierBackgroundLocation(jobId);
+        } catch (bgErr) {
+            console.warn("Could not start background location tracking:", bgErr);
+        }
+
+        // 2. Foreground subscription for immediate in-app UI map updates
         locationSubscription.current = await Location.watchPositionAsync(
             {
                 accuracy: Location.Accuracy.High,
@@ -59,6 +87,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
     };
 
     const stopLocationTracking = () => {
+        stopCourierBackgroundLocation();
         if (locationSubscription.current) {
             locationSubscription.current.remove();
             locationSubscription.current = null;
@@ -85,14 +114,166 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
         };
     }, [user, navigation]);
 
-    // Start/stop tracking based on activeJob
+    // Start/stop tracking and fetch call attempts based on activeJob
     useEffect(() => {
         if (activeJob) {
             startLocationTracking(activeJob.id);
+            fetchCallAttempts(activeJob.id);
         } else {
             stopLocationTracking();
         }
     }, [activeJob?.id]);
+
+    const fetchCallAttempts = async (jobId: string) => {
+        if (!user?.id) return;
+        try {
+            const logs = await orderService.getOrderCallAttempts(jobId, user.id);
+            setCallAttempts(logs);
+            if (logs.length > 0) {
+                const latest = new Date(logs[logs.length - 1].created_at).getTime();
+                setLastCallTimestamp(latest);
+            }
+        } catch (err) {
+            console.warn('Error fetching call attempts:', err);
+        }
+    };
+
+    // 5-Minute Arrival Countdown Timer Effect (Push Alert Only; Zero SMS/WhatsApp)
+    useEffect(() => {
+        if (!activeJob?.arrival_timer_started_at) {
+            setTimerSecondsLeft(null);
+            return;
+        }
+
+        const startTime = new Date(activeJob.arrival_timer_started_at).getTime();
+        const updateTimer = () => {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const remaining = Math.max(0, 300 - elapsed);
+            setTimerSecondsLeft(remaining);
+        };
+        updateTimer();
+        const interval = setInterval(updateTimer, 1000);
+        return () => clearInterval(interval);
+    }, [activeJob?.arrival_timer_started_at]);
+
+    // Anti-Abuse: 1-Minute Spacing Constraint Tracker
+    useEffect(() => {
+        if (!lastCallTimestamp) {
+            setSecondsUntilNextCallAllowed(0);
+            return;
+        }
+        const checkSpacing = () => {
+            const elapsed = Math.floor((Date.now() - lastCallTimestamp) / 1000);
+            const waitTime = Math.max(0, 60 - elapsed);
+            setSecondsUntilNextCallAllowed(waitTime);
+        };
+        checkSpacing();
+        const interval = setInterval(checkSpacing, 1000);
+        return () => clearInterval(interval);
+    }, [lastCallTimestamp]);
+
+    const formatTimer = (seconds: number | null) => {
+        if (seconds === null) return '05:00';
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    };
+
+    const handleStartArrivalTimer = async () => {
+        if (!activeJob?.id || !user?.id) return;
+        setStartingTimer(true);
+        try {
+            await orderService.startArrivalTimer(activeJob.id, user.id);
+            Alert.alert(
+                '5-Minute Timer Started',
+                'Your customer was notified via in-app push notification. The 5-minute arrival waiting countdown is active.'
+            );
+            fetchActiveJob();
+        } catch (err: any) {
+            Alert.alert('Error', err?.message || 'Failed to start arrival waiting timer.');
+        } finally {
+            setStartingTimer(false);
+        }
+    };
+
+    const handleMakeMaskedCall = async () => {
+        if (!activeJob || !user) return;
+        if (secondsUntilNextCallAllowed > 0) {
+            Alert.alert(
+                'Spacing Rule Active',
+                `Anti-abuse protocol requires waiting at least 1 minute between call attempts. Please wait ${secondsUntilNextCallAllowed}s.`
+            );
+            return;
+        }
+        try {
+            const targetId = activeJob.customer_id;
+            const targetPhone = activeJob.customer?.phone;
+            await orderService.initiateMaskedCall(
+                activeJob.id,
+                user.id,
+                'driver',
+                targetId,
+                targetPhone,
+                'manual_driver_call'
+            );
+            setLastCallTimestamp(Date.now());
+            fetchCallAttempts(activeJob.id);
+            Alert.alert('Call Connected', 'Masked call placed through ShipMate proxy (+263 867 700 0123).');
+        } catch (err: any) {
+            Alert.alert('Call Error', err?.message || 'Could not initiate masked call.');
+        }
+    };
+
+    const handleReleaseJob = async () => {
+        if (!activeJob || !user) return;
+        setReleasing(true);
+        try {
+            const comp = parseFloat(proposedCompensation) || 0;
+            const latestCallId = callAttempts.length > 0 ? callAttempts[callAttempts.length - 1].id : null;
+            await orderService.releaseOrderByDriver(activeJob.id, user.id, releaseReason, latestCallId, comp);
+            setReleaseModalVisible(false);
+            stopLocationTracking();
+            setActiveJob(null);
+            Alert.alert('Job Released', 'This order has been released and prioritized for other couriers.');
+            navigation.navigate('Jobs');
+        } catch (err: any) {
+            Alert.alert('Release Error', err?.message || 'Failed to release job.');
+        } finally {
+            setReleasing(false);
+        }
+    };
+
+    // Load unread message count and subscribe to incoming customer messages
+    useEffect(() => {
+        if (!activeJob?.id || !user?.id) {
+            setUnreadChatCount(0);
+            return;
+        }
+
+        const fetchUnread = async () => {
+            const count = await chatService.getUnreadCount(activeJob.id, user.id);
+            setUnreadChatCount(count);
+        };
+        fetchUnread();
+
+        const msgChannel = supabase
+            .channel(`driver_job_chat_${activeJob.id}`)
+            .on('postgres_changes', {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'order_messages',
+                filter: `order_id=eq.${activeJob.id}`
+            }, (payload) => {
+                if (payload.new && payload.new.sender_id !== user.id) {
+                    setUnreadChatCount((prev) => prev + 1);
+                }
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(msgChannel);
+        };
+    }, [activeJob?.id, user?.id]);
 
     const getNextStatus = (currentStatus: OrderStatus): OrderStatus | null => {
         const flow: OrderStatus[] = [
@@ -118,8 +299,58 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
             case 'arrived_at_pickup': return 'Package Collected';
             case 'picked_up': return 'Start En Route to Delivery';
             case 'en_route_to_delivery': return 'Arrived at Delivery';
-            case 'arrived_at_delivery': return 'Complete Delivery';
+            case 'arrived_at_delivery': 
+                return (activeJob?.pin_locked || activeJob?.pin_fallback_to_photo)
+                    ? 'Complete via Photo Proof (PIN Locked)'
+                    : 'Enter Handover PIN';
             default: return 'Next Step';
+        }
+    };
+
+    const handleVerifyPin = async () => {
+        if (!activeJob || !user) return;
+        if (enteredPin.length !== 4) {
+            setPinError('Please enter the full 4-digit PIN.');
+            return;
+        }
+
+        try {
+            setVerifyingPin(true);
+            setPinError(null);
+
+            const result = await orderService.verifyHandoverPin(activeJob.id, user.id, enteredPin);
+
+            if (result.success) {
+                setPinModalVisible(false);
+                Alert.alert("Delivery Confirmed! 🎉", "Handover PIN verified successfully. This delivery is complete!");
+                stopLocationTracking();
+                setActiveJob(null);
+                navigation.navigate('Jobs');
+                return;
+            }
+
+            if (result.locked || result.fallback_to_photo) {
+                setPinModalVisible(false);
+                Alert.alert(
+                    "PIN Locked (3 Failed Attempts)",
+                    "Maximum PIN attempts reached. This order has been flagged for review. Please complete handover using Photo Proof-of-Delivery.",
+                    [
+                        {
+                            text: "Open Photo Proof",
+                            onPress: () => setPodVisible(true)
+                        }
+                    ]
+                );
+                setActiveJob((prev: any) => prev ? { ...prev, pin_locked: true, pin_fallback_to_photo: true } : null);
+            } else {
+                const attemptsLeft = result.attempts_left !== undefined ? result.attempts_left : Math.max(0, 3 - ((activeJob.pin_attempts_count || 0) + 1));
+                setPinError(`Incorrect PIN. ${attemptsLeft} attempt${attemptsLeft === 1 ? '' : 's'} remaining.`);
+                setActiveJob((prev: any) => prev ? { ...prev, pin_attempts_count: (prev.pin_attempts_count || 0) + 1 } : null);
+            }
+        } catch (error: any) {
+            setPinError(error?.message || 'Verification error. Please try again.');
+        } finally {
+            setVerifyingPin(false);
         }
     };
 
@@ -129,7 +360,13 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
         const nextStatus = getNextStatus(activeJob.status);
         
         if (activeJob.status === 'arrived_at_delivery') {
-            setPodVisible(true);
+            if (activeJob.pin_locked || activeJob.pin_fallback_to_photo) {
+                setPodVisible(true);
+            } else {
+                setEnteredPin('');
+                setPinError(null);
+                setPinModalVisible(true);
+            }
             return;
         }
 
@@ -159,6 +396,48 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
             Alert.alert("Error", error.message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const openNativeNavigation = (
+        lat: number | string | null | undefined, 
+        lng: number | string | null | undefined, 
+        address?: string | null
+    ) => {
+        if (!lat || !lng || isNaN(parseFloat(lat as string))) {
+            if (address) {
+                const query = encodeURIComponent(address);
+                Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`);
+            } else {
+                Alert.alert('Coordinates Missing', 'Location coordinates are not available for turn-by-turn navigation.');
+            }
+            return;
+        }
+
+        const latitude = parseFloat(lat as string);
+        const longitude = parseFloat(lng as string);
+
+        const scheme = Platform.select({
+            ios: `maps://app?daddr=${latitude},${longitude}`,
+            android: `google.navigation:q=${latitude},${longitude}`
+        });
+
+        const fallbackUrl = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+
+        if (scheme) {
+            Linking.canOpenURL(scheme)
+                .then((supported) => {
+                    if (supported) {
+                        Linking.openURL(scheme);
+                    } else {
+                        Linking.openURL(fallbackUrl);
+                    }
+                })
+                .catch(() => {
+                    Linking.openURL(fallbackUrl);
+                });
+        } else {
+            Linking.openURL(fallbackUrl);
         }
     };
 
@@ -282,24 +561,71 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                         <View style={styles.locationContainer}>
                             <View style={styles.locationRow}>
                                 <View style={styles.timelineDot} />
-                                <Text style={styles.locationText} numberOfLines={2}>
-                                    <Text style={styles.locationLabel}>From: </Text>
-                                    {activeJob.pickup_address || activeJob.errand_location || 'Pickup Location'}
-                                </Text>
+                                <View style={styles.locationInfoWrap}>
+                                    <Text style={styles.locationText} numberOfLines={2}>
+                                        <Text style={styles.locationLabel}>From: </Text>
+                                        {activeJob.pickup_address || activeJob.errand_location || 'Pickup Location'}
+                                    </Text>
+                                </View>
+                                <TouchableOpacity 
+                                    style={styles.navChip}
+                                    activeOpacity={0.7}
+                                    onPress={() => openNativeNavigation(pickup_latitude, pickup_longitude, activeJob.pickup_address || activeJob.errand_location)}
+                                >
+                                    <Text style={styles.navChipText}>🧭 Nav</Text>
+                                </TouchableOpacity>
                             </View>
                             <View style={styles.timelineLine} />
                             <View style={styles.locationRow}>
                                 <View style={[styles.timelineDot, styles.timelineDotEnd]} />
-                                <Text style={styles.locationText} numberOfLines={2}>
-                                    <Text style={styles.locationLabel}>To: </Text>
-                                    {activeJob.dropoff_address || 'Dropoff Location'}
-                                </Text>
+                                <View style={styles.locationInfoWrap}>
+                                    <Text style={styles.locationText} numberOfLines={2}>
+                                        <Text style={styles.locationLabel}>To: </Text>
+                                        {activeJob.dropoff_address || 'Dropoff Location'}
+                                    </Text>
+                                </View>
+                                <TouchableOpacity 
+                                    style={styles.navChip}
+                                    activeOpacity={0.7}
+                                    onPress={() => openNativeNavigation(dropoff_latitude, dropoff_longitude, activeJob.dropoff_address)}
+                                >
+                                    <Text style={styles.navChipText}>🧭 Nav</Text>
+                                </TouchableOpacity>
                             </View>
                         </View>
 
                         <View style={styles.statusBadge}>
                             <Text style={styles.statusLabel}>Current Status: </Text>
                             <Text style={styles.statusValue}>{activeJob.status.replace(/_/g, ' ').toUpperCase()}</Text>
+                        </View>
+
+                        {/* Driver Payment Directive Banner */}
+                        <View style={[
+                            styles.driverDirectiveBanner,
+                            activeJob.payment_method === 'cash_on_delivery' 
+                                ? styles.driverDirectiveBannerCod 
+                                : styles.driverDirectiveBannerDigital
+                        ]}>
+                            <Text style={styles.driverDirectiveIcon}>
+                                {activeJob.payment_method === 'cash_on_delivery' ? '💵' : '✅'}
+                            </Text>
+                            <View style={styles.driverDirectiveTextWrap}>
+                                <Text style={[
+                                    styles.driverDirectiveTitle,
+                                    activeJob.payment_method === 'cash_on_delivery' 
+                                        ? styles.driverDirectiveTitleCod 
+                                        : styles.driverDirectiveTitleDigital
+                                ]}>
+                                    {activeJob.payment_method === 'cash_on_delivery'
+                                        ? `COLLECT CASH: $${parseFloat(activeJob.cash_to_collect || activeJob.estimated_cost || 0).toFixed(2)} USD`
+                                        : `PAID DIGITALLY (${(activeJob.payment_method || 'DIGITAL').toUpperCase()})`}
+                                </Text>
+                                <Text style={styles.driverDirectiveSubtitle}>
+                                    {activeJob.payment_method === 'cash_on_delivery'
+                                        ? 'Collect physical cash from customer upon delivery. Platform commission will be deducted from your float.'
+                                        : 'DO NOT collect cash from customer. Net earnings will be credited directly to your ShipMate Wallet.'}
+                                </Text>
+                            </View>
                         </View>
 
                         {/* Customer Info Card */}
@@ -328,16 +654,119 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                                 </TouchableOpacity>
                                 <TouchableOpacity 
                                     style={[styles.contactBtn, styles.chatBtn]}
-                                    onPress={() => navigation.navigate('Chat', { 
-                                        orderId: activeJob.id, 
-                                        recipientName: activeJob.customer?.full_name || 'Customer', 
-                                        recipientPhone: activeJob.customer?.phone 
-                                    })}
+                                    onPress={() => {
+                                        setUnreadChatCount(0);
+                                        navigation.navigate('Chat', { 
+                                             orderId: activeJob.id, 
+                                             recipientName: activeJob.customer?.full_name || 'Customer', 
+                                             recipientPhone: activeJob.customer?.phone 
+                                         });
+                                    }}
                                 >
                                     <Text style={styles.contactIcon}>💬</Text>
+                                    {unreadChatCount > 0 && (
+                                        <View style={styles.unreadBadge}>
+                                            <Text style={styles.unreadBadgeText}>
+                                                {unreadChatCount > 9 ? '9+' : unreadChatCount}
+                                            </Text>
+                                        </View>
+                                    )}
                                 </TouchableOpacity>
                             </View>
                         </View>
+
+                        {/* Recipient Drop-off Card (if specified) */}
+                        {(activeJob.recipient_name || activeJob.recipient_phone || activeJob.recipient_notes) && (
+                            <View style={styles.recipientJobCard}>
+                                <View style={styles.recipientJobHeader}>
+                                    <View style={styles.recipientJobHeaderLeft}>
+                                        <Text style={styles.recipientJobHeaderIcon}>👤</Text>
+                                        <Text style={styles.recipientJobHeaderTitle}>Drop-off Recipient</Text>
+                                    </View>
+                                    {activeJob.sms_notifications_enabled ? (
+                                        <View style={styles.smsActiveBadge}>
+                                            <Text style={styles.smsActiveBadgeText}>📲 Paid SMS Active</Text>
+                                        </View>
+                                    ) : (
+                                        <View style={styles.smsInactiveBadge}>
+                                            <Text style={styles.smsInactiveBadgeText}>Free App Tracking</Text>
+                                        </View>
+                                    )}
+                                </View>
+
+                                <View style={styles.recipientJobBody}>
+                                    <Text style={styles.recipientJobName}>
+                                        {activeJob.recipient_name || 'Designated Recipient'}
+                                    </Text>
+                                    {activeJob.recipient_notes && (
+                                        <View style={styles.recipientNotesWrap}>
+                                            <Text style={styles.recipientNotesLabel}>Gate / Delivery Note:</Text>
+                                            <Text style={styles.recipientNotesText}>{activeJob.recipient_notes}</Text>
+                                        </View>
+                                    )}
+                                </View>
+
+                                <View style={styles.recipientActionButtonsRow}>
+                                    {activeJob.recipient_phone && (
+                                        <TouchableOpacity
+                                            style={styles.recipientCallBtn}
+                                            activeOpacity={0.7}
+                                            onPress={() => Linking.openURL(`tel:${activeJob.recipient_phone}`)}
+                                        >
+                                            <Text style={styles.recipientCallBtnIcon}>📞</Text>
+                                            <Text style={styles.recipientCallBtnText}>Call Recipient</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                    <TouchableOpacity
+                                        style={styles.recipientSmsBtn}
+                                        activeOpacity={0.7}
+                                        onPress={() => {
+                                            const targetPhone = activeJob.recipient_phone || activeJob.customer?.phone;
+                                            const arrivalMsg = encodeURIComponent(
+                                                `Hi ${activeJob.recipient_name || 'there'}! I'm your ShipMate courier. I have arrived outside at your gate / door with your order.`
+                                            );
+                                            if (targetPhone) {
+                                                Linking.openURL(`sms:${targetPhone}?body=${arrivalMsg}`);
+                                            } else {
+                                                Alert.alert('Phone Unavailable', 'No phone number available to send SMS.');
+                                            }
+                                        }}
+                                    >
+                                        <Text style={styles.recipientSmsBtnIcon}>🔔</Text>
+                                        <Text style={styles.recipientSmsBtnText}>Ping Gate Arrival</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        )}
+
+                        {/* 1-Tap Quick Turn-by-Turn GPS Navigation Intent */}
+                        <TouchableOpacity
+                            style={styles.turnByTurnButton}
+                            activeOpacity={0.8}
+                            onPress={() => {
+                                const isHeadingToPickup = activeJob.status === 'driver_assigned' || activeJob.status === 'en_route_to_pickup';
+                                if (isHeadingToPickup) {
+                                    openNativeNavigation(pickup_latitude, pickup_longitude, activeJob.pickup_address || activeJob.errand_location);
+                                } else {
+                                    openNativeNavigation(dropoff_latitude, dropoff_longitude, activeJob.dropoff_address);
+                                }
+                            }}
+                        >
+                            <LinearGradient
+                                colors={['#1E293B', '#0F172A']}
+                                style={styles.turnByTurnGradient}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                            >
+                                <Text style={styles.turnByTurnIcon}>🗺️</Text>
+                                <Text style={styles.turnByTurnText}>
+                                    {(activeJob.status === 'driver_assigned' || activeJob.status === 'en_route_to_pickup')
+                                        ? 'Turn-by-Turn to Pickup'
+                                        : 'Turn-by-Turn to Drop-off'}
+                                </Text>
+                                <Text style={styles.turnByTurnArrow}>↗</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
 
                         <TouchableOpacity
                             style={styles.completeButtonContainer}
@@ -359,6 +788,45 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                             </LinearGradient>
                         </TouchableOpacity>
 
+                        {/* Arrival Waiting Timer Trigger (When at delivery pin) */}
+                        {(activeJob.status === 'arrived_at_delivery' || activeJob.status === 'arrived') && (
+                            !activeJob.arrival_timer_started_at ? (
+                                <TouchableOpacity
+                                    style={styles.arrivalTimerTriggerBtn}
+                                    onPress={handleStartArrivalTimer}
+                                    disabled={startingTimer}
+                                >
+                                    {startingTimer ? (
+                                        <ActivityIndicator color="#FFFFFF" />
+                                    ) : (
+                                        <Text style={styles.arrivalTimerTriggerText}>
+                                            ⏳ Start 5-Min Waiting Timer (Push Alert Only)
+                                        </Text>
+                                    )}
+                                </TouchableOpacity>
+                            ) : (
+                                <View style={styles.arrivalTimerActiveBox}>
+                                    <Text style={styles.arrivalTimerActiveIcon}>⏳</Text>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.arrivalTimerActiveTitle}>Customer Waiting Timer Active</Text>
+                                        <Text style={styles.arrivalTimerActiveSubtitle}>
+                                            Push alert sent to customer (zero SMS/WhatsApp).
+                                        </Text>
+                                    </View>
+                                    <Text style={styles.arrivalTimerClock}>{formatTimer(timerSecondsLeft)}</Text>
+                                </View>
+                            )
+                        )}
+
+                        {/* Release Job Trigger Button */}
+                        <TouchableOpacity
+                            style={styles.releaseOrderTriggerBtn}
+                            activeOpacity={0.7}
+                            onPress={() => setReleaseModalVisible(true)}
+                        >
+                            <Text style={styles.releaseOrderTriggerText}>Release Job (Issue / No-Show)</Text>
+                        </TouchableOpacity>
+
                         <ProofOfDeliveryModal 
                             visible={podVisible}
                             onClose={() => setPodVisible(false)}
@@ -368,6 +836,278 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                     </SafeAreaView>
                 </BlurView>
             </View>
+
+            {/* Handover PIN (OTP) Confirmation Modal */}
+            <Modal
+                visible={pinModalVisible}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setPinModalVisible(false)}
+            >
+                <KeyboardAvoidingView 
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
+                    style={styles.pinModalOverlay}
+                >
+                    <View style={styles.pinModalContainer}>
+                        <View style={styles.pinModalHeader}>
+                            <View style={styles.pinModalIconCircle}>
+                                <Text style={styles.pinModalIcon}>🔐</Text>
+                            </View>
+                            <Text style={styles.pinModalTitle}>Delivery Handover PIN</Text>
+                            <Text style={styles.pinModalSubtitle}>
+                                Ask the customer or recipient for the 4-digit PIN persistently displayed on their Shipmate app.
+                            </Text>
+                        </View>
+
+                        {/* 4-Digit Display Input */}
+                        <View style={styles.pinInputWrap}>
+                            <TextInput
+                                style={styles.pinHiddenInput}
+                                keyboardType="number-pad"
+                                maxLength={4}
+                                value={enteredPin}
+                                onChangeText={(val) => {
+                                    const clean = val.replace(/[^0-9]/g, '');
+                                    setEnteredPin(clean);
+                                    if (pinError) setPinError(null);
+                                }}
+                                autoFocus={true}
+                            />
+                            <View style={styles.pinBoxesRow}>
+                                {[0, 1, 2, 3].map((index) => {
+                                    const char = enteredPin[index] || '';
+                                    const isFocused = enteredPin.length === index;
+                                    return (
+                                        <View 
+                                            key={index} 
+                                            style={[
+                                                styles.pinBox,
+                                                isFocused && styles.pinBoxFocused,
+                                                Boolean(char) && styles.pinBoxFilled,
+                                                Boolean(pinError) && styles.pinBoxError
+                                            ]}
+                                        >
+                                            <Text style={styles.pinBoxText}>{char}</Text>
+                                        </View>
+                                    );
+                                })}
+                            </View>
+                        </View>
+
+                        {/* Error & Remaining Attempts Warning */}
+                        {pinError && (
+                            <View style={styles.pinErrorBanner}>
+                                <Text style={styles.pinErrorIcon}>⚠️</Text>
+                                <Text style={styles.pinErrorText}>{pinError}</Text>
+                            </View>
+                        )}
+
+                        {/* Anti-Abuse Lockout Notice */}
+                        <Text style={styles.pinAttemptNote}>
+                            {activeJob.pin_attempts_count && activeJob.pin_attempts_count > 0 
+                                ? `Attempts used: ${activeJob.pin_attempts_count}/3. Lockout triggers photo proof.`
+                                : 'Maximum 3 attempts. Lockout triggers photo proof fallback.'}
+                        </Text>
+
+                        {/* Masked Call Proxy Button */}
+                        <TouchableOpacity 
+                            style={[styles.pinMaskedCallBtn, secondsUntilNextCallAllowed > 0 && styles.pinMaskedCallBtnDisabled]} 
+                            onPress={handleMakeMaskedCall}
+                            disabled={secondsUntilNextCallAllowed > 0}
+                        >
+                            <Text style={styles.pinMaskedCallBtnText}>
+                                {secondsUntilNextCallAllowed > 0 
+                                    ? `Wait ${secondsUntilNextCallAllowed}s for next call` 
+                                    : '📞 Call Customer for PIN (Masked Proxy)'}
+                            </Text>
+                        </TouchableOpacity>
+
+                        {/* Actions */}
+                        <View style={styles.pinModalActionsRow}>
+                            <TouchableOpacity 
+                                style={styles.pinCancelBtn}
+                                onPress={() => {
+                                    setPinModalVisible(false);
+                                    setEnteredPin('');
+                                    setPinError(null);
+                                }}
+                                disabled={verifyingPin}
+                            >
+                                <Text style={styles.pinCancelBtnText}>Cancel</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity 
+                                style={[
+                                    styles.pinVerifyBtn, 
+                                    (enteredPin.length !== 4 || verifyingPin) && styles.pinVerifyBtnDisabled
+                                ]}
+                                onPress={handleVerifyPin}
+                                disabled={enteredPin.length !== 4 || verifyingPin}
+                            >
+                                {verifyingPin ? (
+                                    <ActivityIndicator color="#FFFFFF" size="small" />
+                                ) : (
+                                    <Text style={styles.pinVerifyBtnText}>Verify & Complete</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </KeyboardAvoidingView>
+            </Modal>
+
+            {/* Release Job Modal with Strict Anti-Abuse Protocol */}
+            <Modal
+                visible={releaseModalVisible}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setReleaseModalVisible(false)}
+            >
+                <View style={styles.releaseModalOverlay}>
+                    <View style={styles.releaseModalCard}>
+                        <View style={styles.releaseModalHeader}>
+                            <Text style={styles.releaseModalTitle}>Release Active Job</Text>
+                            <TouchableOpacity onPress={() => setReleaseModalVisible(false)}>
+                                <Text style={styles.releaseModalClose}>✕</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <Text style={styles.releaseModalSubtitle}>
+                            Releasing returns this order to the dispatch pool with priority. Select a verified reason:
+                        </Text>
+
+                        {/* Fixed Enum Reasons */}
+                        <TouchableOpacity
+                            style={[styles.reasonCard, releaseReason === 'mechanical_issue' && styles.reasonCardActive]}
+                            onPress={() => setReleaseReason('mechanical_issue')}
+                        >
+                            <View style={styles.reasonCardTop}>
+                                <Text style={styles.reasonCardTitle}>🔧 Mechanical Issue / Breakdown</Text>
+                                <Text style={styles.reasonPenaltyText}>-0.05 rating</Text>
+                            </View>
+                            <Text style={styles.reasonCardDesc}>Vehicle puncture, accident, or physical breakdown.</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.reasonCard, releaseReason === 'store_closed' && styles.reasonCardActive]}
+                            onPress={() => setReleaseReason('store_closed')}
+                        >
+                            <View style={styles.reasonCardTop}>
+                                <Text style={styles.reasonCardTitle}>🏪 Store / Pickup Closed</Text>
+                                <Text style={styles.reasonPenaltyText}>-0.15 rating</Text>
+                            </View>
+                            <Text style={styles.reasonCardDesc}>Merchant or pickup location was locked or closed. (Requires at least 1 verified call attempt).</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.reasonCard, releaseReason === 'customer_no_show' && styles.reasonCardActive]}
+                            onPress={() => setReleaseReason('customer_no_show')}
+                        >
+                            <View style={styles.reasonCardTop}>
+                                <Text style={styles.reasonCardTitle}>🚪 Customer No-Show at Gate</Text>
+                                <Text style={styles.reasonPenaltyText}>Protected Anti-Abuse</Text>
+                            </View>
+                            <Text style={styles.reasonCardDesc}>Customer unreachable at delivery gate after 5-min timer & 3 calls.</Text>
+                        </TouchableOpacity>
+
+                        {/* Anti-Abuse Checklist for customer_no_show */}
+                        {releaseReason === 'customer_no_show' && (
+                            <View style={styles.antiAbuseBox}>
+                                <Text style={styles.antiAbuseTitle}>Anti-Abuse Verification Checklist:</Text>
+                                
+                                <View style={styles.checkRow}>
+                                    <Text style={styles.checkIcon}>
+                                        {(activeJob.status === 'arrived_at_delivery' || activeJob.status === 'arrived') ? '✅' : '❌'}
+                                    </Text>
+                                    <Text style={styles.checkText}>Arrived at delivery location pin</Text>
+                                </View>
+
+                                <View style={styles.checkRow}>
+                                    <Text style={styles.checkIcon}>
+                                        {(activeJob.arrival_timer_started_at && timerSecondsLeft === 0) ? '✅' : '⏳'}
+                                    </Text>
+                                    <Text style={styles.checkText}>
+                                        5-Minute Arrival Waiting Timer completed {timerSecondsLeft !== null && timerSecondsLeft > 0 ? `(${formatTimer(timerSecondsLeft)} left)` : ''}
+                                    </Text>
+                                </View>
+
+                                <View style={styles.checkRow}>
+                                    <Text style={styles.checkIcon}>
+                                        {callAttempts.length >= 3 ? '✅' : '📞'}
+                                    </Text>
+                                    <Text style={styles.checkText}>
+                                        {"3 Masked-Calls spaced >= 1 min apart ("}{callAttempts.length}{"/3 placed)"}
+                                    </Text>
+                                </View>
+
+                                {/* Quick Masked Call Action Button */}
+                                <TouchableOpacity
+                                    style={[styles.quickCallBtn, secondsUntilNextCallAllowed > 0 && styles.quickCallBtnDisabled]}
+                                    onPress={handleMakeMaskedCall}
+                                    disabled={secondsUntilNextCallAllowed > 0}
+                                >
+                                    <Text style={styles.quickCallBtnText}>
+                                        {secondsUntilNextCallAllowed > 0
+                                            ? `Wait ${secondsUntilNextCallAllowed}s for next call attempt`
+                                            : '📞 Call Customer via Masked Proxy (+2638677000123)'}
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
+                        {/* Proposed Compensation Input */}
+                        <View style={styles.compensationInputWrap}>
+                            <Text style={styles.compensationInputLabel}>
+                                Proposed Trip Compensation ($ USD for {(activeJob?.cumulative_distance_km || 0).toFixed(1)} km traveled):
+                            </Text>
+                            <TextInput
+                                style={styles.compensationTextInput}
+                                keyboardType="numeric"
+                                value={proposedCompensation}
+                                onChangeText={setProposedCompensation}
+                                placeholder="0.50"
+                                placeholderTextColor="#94A3B8"
+                            />
+                        </View>
+
+                        {/* Release Actions */}
+                        <View style={styles.releaseModalActions}>
+                            <TouchableOpacity
+                                style={styles.releaseCancelBtn}
+                                onPress={() => setReleaseModalVisible(false)}
+                            >
+                                <Text style={styles.releaseCancelText}>Keep Job</Text>
+                            </TouchableOpacity>
+
+                            {(() => {
+                                const isNoShow = releaseReason === 'customer_no_show';
+                                const isStoreClosed = releaseReason === 'store_closed';
+                                const isAtPin = activeJob.status === 'arrived_at_delivery' || activeJob.status === 'arrived';
+                                const timerDone = activeJob.arrival_timer_started_at && timerSecondsLeft === 0;
+                                const has3Calls = callAttempts.length >= 3;
+                                const has1Call = callAttempts.length >= 1;
+
+                                const isBlocked = (isNoShow && (!isAtPin || !timerDone || !has3Calls)) || (isStoreClosed && !has1Call);
+
+                                return (
+                                    <TouchableOpacity
+                                        style={[styles.releaseConfirmBtn, isBlocked && styles.releaseConfirmBtnBlocked]}
+                                        onPress={handleReleaseJob}
+                                        disabled={isBlocked || releasing}
+                                    >
+                                        {releasing ? (
+                                            <ActivityIndicator color="#FFFFFF" />
+                                        ) : (
+                                            <Text style={styles.releaseConfirmText}>
+                                                {isBlocked ? 'Protocol Incomplete' : 'Confirm Release'}
+                                            </Text>
+                                        )}
+                                    </TouchableOpacity>
+                                );
+                            })()}
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 };
@@ -589,5 +1329,672 @@ const styles = StyleSheet.create({
     },
     contactIcon: {
         fontSize: 22,
+    },
+    unreadBadge: {
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        backgroundColor: '#EF4444',
+        borderRadius: 10,
+        minWidth: 20,
+        height: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 4,
+        borderWidth: 1.5,
+        borderColor: '#FFFFFF',
+        shadowColor: '#EF4444',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.5,
+        shadowRadius: 3,
+        elevation: 4,
+    },
+    unreadBadgeText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: '800',
+    },
+    locationInfoWrap: {
+        flex: 1,
+    },
+    navChip: {
+        backgroundColor: '#EFF6FF',
+        borderWidth: 1,
+        borderColor: '#3B82F6',
+        borderRadius: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        marginLeft: 8,
+    },
+    navChipText: {
+        color: '#1D4ED8',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    // Courier Payment Directive Styles
+    driverDirectiveBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 12,
+        borderRadius: 14,
+        marginVertical: 10,
+        gap: 10,
+    },
+    driverDirectiveBannerCod: {
+        backgroundColor: '#FEF3C7',
+        borderWidth: 1.5,
+        borderColor: '#F59E0B',
+    },
+    driverDirectiveBannerDigital: {
+        backgroundColor: '#ECFDF5',
+        borderWidth: 1.5,
+        borderColor: '#10B981',
+    },
+    driverDirectiveIcon: {
+        fontSize: 22,
+    },
+    driverDirectiveTextWrap: {
+        flex: 1,
+    },
+    driverDirectiveTitle: {
+        fontSize: 14,
+        fontWeight: '900',
+        marginBottom: 2,
+        letterSpacing: 0.5,
+    },
+    driverDirectiveTitleCod: {
+        color: '#92400E',
+    },
+    driverDirectiveTitleDigital: {
+        color: '#065F46',
+    },
+    driverDirectiveSubtitle: {
+        fontSize: 11,
+        color: '#475569',
+        lineHeight: 15,
+        fontWeight: '500',
+    },
+    // Turn-by-Turn Quick Action Button
+    turnByTurnButton: {
+        borderRadius: 14,
+        overflow: 'hidden',
+        marginBottom: 10,
+        elevation: 3,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+    },
+    turnByTurnGradient: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 13,
+        paddingHorizontal: 16,
+        gap: 8,
+    },
+    turnByTurnIcon: {
+        fontSize: 18,
+    },
+    turnByTurnText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '800',
+        letterSpacing: 0.3,
+    },
+    turnByTurnArrow: {
+        color: '#60A5FA',
+        fontSize: 16,
+        fontWeight: '900',
+    },
+    // Recipient Job Card Styles
+    recipientJobCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        padding: 14,
+        marginBottom: 10,
+        borderWidth: 1.5,
+        borderColor: '#E2E8F0',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.04,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    recipientJobHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    recipientJobHeaderLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    recipientJobHeaderIcon: {
+        fontSize: 16,
+    },
+    recipientJobHeaderTitle: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#64748B',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    smsActiveBadge: {
+        backgroundColor: '#D1FAE5',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+    },
+    smsActiveBadgeText: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#059669',
+    },
+    smsInactiveBadge: {
+        backgroundColor: '#F1F5F9',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+    },
+    smsInactiveBadgeText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: '#64748B',
+    },
+    recipientJobBody: {
+        marginBottom: 12,
+    },
+    recipientJobName: {
+        fontSize: 16,
+        fontWeight: '800',
+        color: '#0F172A',
+        marginBottom: 4,
+    },
+    recipientNotesWrap: {
+        backgroundColor: '#FEF3C7',
+        padding: 8,
+        borderRadius: 8,
+        marginTop: 4,
+    },
+    recipientNotesLabel: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#B45309',
+        textTransform: 'uppercase',
+    },
+    recipientNotesText: {
+        fontSize: 12,
+        color: '#78350F',
+        fontWeight: '500',
+        marginTop: 2,
+    },
+    recipientActionButtonsRow: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    recipientCallBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#F1F5F9',
+        paddingVertical: 10,
+        borderRadius: 10,
+        gap: 6,
+        borderWidth: 1,
+        borderColor: '#CBD5E1',
+    },
+    recipientCallBtnIcon: {
+        fontSize: 14,
+    },
+    recipientCallBtnText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1E293B',
+    },
+    recipientSmsBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#EFF6FF',
+        paddingVertical: 10,
+        borderRadius: 10,
+        gap: 6,
+        borderWidth: 1,
+        borderColor: '#93C5FD',
+    },
+    recipientSmsBtnIcon: {
+        fontSize: 14,
+    },
+    recipientSmsBtnText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1D4ED8',
+    },
+    // Arrival Waiting Timer Styles (Push Only)
+    arrivalTimerTriggerBtn: {
+        backgroundColor: '#F59E0B',
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 10,
+        shadowColor: '#F59E0B',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    arrivalTimerTriggerText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '800',
+        letterSpacing: 0.3,
+    },
+    arrivalTimerActiveBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FEF3C7',
+        borderWidth: 1.5,
+        borderColor: '#F59E0B',
+        borderRadius: 14,
+        padding: 12,
+        marginBottom: 10,
+        gap: 10,
+    },
+    arrivalTimerActiveIcon: {
+        fontSize: 22,
+    },
+    arrivalTimerActiveTitle: {
+        fontSize: 13,
+        fontWeight: '800',
+        color: '#92400E',
+    },
+    arrivalTimerActiveSubtitle: {
+        fontSize: 11,
+        color: '#B45309',
+        marginTop: 2,
+    },
+    arrivalTimerClock: {
+        fontSize: 16,
+        fontWeight: '900',
+        color: '#B45309',
+        fontVariant: ['tabular-nums'],
+    },
+    // Release Job Trigger Button
+    releaseOrderTriggerBtn: {
+        alignItems: 'center',
+        paddingVertical: 10,
+        marginBottom: 8,
+    },
+    releaseOrderTriggerText: {
+        color: '#EF4444',
+        fontSize: 13,
+        fontWeight: '700',
+        textDecorationLine: 'underline',
+    },
+    // Release Modal Styles
+    releaseModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(15, 23, 42, 0.65)',
+        justifyContent: 'flex-end',
+    },
+    releaseModalCard: {
+        backgroundColor: '#FFFFFF',
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        padding: 24,
+        maxHeight: '90%',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+        elevation: 10,
+    },
+    releaseModalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    releaseModalTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    releaseModalClose: {
+        fontSize: 20,
+        color: '#64748B',
+        fontWeight: '700',
+        padding: 4,
+    },
+    releaseModalSubtitle: {
+        fontSize: 13,
+        color: '#64748B',
+        lineHeight: 18,
+        marginBottom: 16,
+    },
+    reasonCard: {
+        backgroundColor: '#F8FAFC',
+        borderWidth: 1.5,
+        borderColor: '#E2E8F0',
+        borderRadius: 14,
+        padding: 12,
+        marginBottom: 10,
+    },
+    reasonCardActive: {
+        borderColor: '#EF4444',
+        backgroundColor: '#FEF2F2',
+    },
+    reasonCardTop: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+    reasonCardTitle: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    reasonPenaltyText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#EF4444',
+    },
+    reasonCardDesc: {
+        fontSize: 12,
+        color: '#64748B',
+        lineHeight: 16,
+    },
+    // Anti-Abuse Box
+    antiAbuseBox: {
+        backgroundColor: '#FFFBEB',
+        borderWidth: 1,
+        borderColor: '#FDE68A',
+        borderRadius: 14,
+        padding: 12,
+        marginBottom: 12,
+    },
+    antiAbuseTitle: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#92400E',
+        marginBottom: 8,
+        textTransform: 'uppercase',
+    },
+    checkRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 6,
+        gap: 8,
+    },
+    checkIcon: {
+        fontSize: 13,
+    },
+    checkText: {
+        fontSize: 12,
+        color: '#451A03',
+        fontWeight: '600',
+        flex: 1,
+    },
+    quickCallBtn: {
+        backgroundColor: '#055FEE',
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 10,
+        alignItems: 'center',
+        marginTop: 6,
+    },
+    quickCallBtnDisabled: {
+        backgroundColor: '#94A3B8',
+    },
+    quickCallBtnText: {
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    // Compensation Input
+    compensationInputWrap: {
+        backgroundColor: '#F1F5F9',
+        padding: 12,
+        borderRadius: 12,
+        marginBottom: 16,
+    },
+    compensationInputLabel: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#334155',
+        marginBottom: 6,
+    },
+    compensationTextInput: {
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1,
+        borderColor: '#CBD5E1',
+        borderRadius: 8,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    releaseModalActions: {
+        flexDirection: 'row',
+        gap: 12,
+        marginTop: 6,
+        marginBottom: Platform.OS === 'ios' ? 16 : 8,
+    },
+    releaseCancelBtn: {
+        flex: 1,
+        backgroundColor: '#F1F5F9',
+        paddingVertical: 14,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    releaseCancelText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#475569',
+    },
+    releaseConfirmBtn: {
+        flex: 1.5,
+        backgroundColor: '#EF4444',
+        paddingVertical: 14,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    releaseConfirmBtnBlocked: {
+        backgroundColor: '#CBD5E1',
+    },
+    releaseConfirmText: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: '#FFFFFF',
+    },
+    // Handover PIN Modal Styles
+    pinModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.65)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    pinModalContainer: {
+        width: '100%',
+        maxWidth: 400,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 24,
+        padding: 24,
+        alignItems: 'center',
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.25,
+        shadowRadius: 16,
+        elevation: 8,
+    },
+    pinModalHeader: {
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    pinModalIconCircle: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: '#EFF6FF',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    pinModalIcon: {
+        fontSize: 26,
+    },
+    pinModalTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#0F172A',
+        marginBottom: 6,
+        textAlign: 'center',
+    },
+    pinModalSubtitle: {
+        fontSize: 13,
+        color: '#64748B',
+        textAlign: 'center',
+        lineHeight: 18,
+    },
+    pinInputWrap: {
+        width: '100%',
+        alignItems: 'center',
+        marginVertical: 12,
+        position: 'relative',
+    },
+    pinHiddenInput: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        opacity: 0.01,
+        zIndex: 10,
+    },
+    pinBoxesRow: {
+        flexDirection: 'row',
+        gap: 12,
+        justifyContent: 'center',
+    },
+    pinBox: {
+        width: 52,
+        height: 60,
+        borderRadius: 14,
+        borderWidth: 2,
+        borderColor: '#E2E8F0',
+        backgroundColor: '#F8FAFC',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    pinBoxFocused: {
+        borderColor: '#055FEE',
+        backgroundColor: '#FFFFFF',
+    },
+    pinBoxFilled: {
+        borderColor: '#055FEE',
+        backgroundColor: '#EFF6FF',
+    },
+    pinBoxError: {
+        borderColor: '#EF4444',
+        backgroundColor: '#FEF2F2',
+    },
+    pinBoxText: {
+        fontSize: 26,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    pinErrorBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: '#FEF2F2',
+        borderWidth: 1,
+        borderColor: '#FCA5A5',
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        marginTop: 10,
+        width: '100%',
+    },
+    pinErrorIcon: {
+        fontSize: 14,
+    },
+    pinErrorText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#DC2626',
+        flex: 1,
+    },
+    pinAttemptNote: {
+        fontSize: 11,
+        color: '#94A3B8',
+        textAlign: 'center',
+        marginTop: 8,
+        fontWeight: '500',
+    },
+    pinMaskedCallBtn: {
+        width: '100%',
+        backgroundColor: '#F1F5F9',
+        borderRadius: 12,
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+        marginTop: 14,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#CBD5E1',
+    },
+    pinMaskedCallBtnDisabled: {
+        opacity: 0.6,
+    },
+    pinMaskedCallBtnText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#334155',
+    },
+    pinModalActionsRow: {
+        flexDirection: 'row',
+        gap: 12,
+        width: '100%',
+        marginTop: 20,
+    },
+    pinCancelBtn: {
+        flex: 1,
+        backgroundColor: '#F1F5F9',
+        borderRadius: 14,
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    pinCancelBtnText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#475569',
+    },
+    pinVerifyBtn: {
+        flex: 2,
+        backgroundColor: '#055FEE',
+        borderRadius: 14,
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    pinVerifyBtnDisabled: {
+        backgroundColor: '#93C5FD',
+    },
+    pinVerifyBtnText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#FFFFFF',
     },
 });

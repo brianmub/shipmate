@@ -13,14 +13,31 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.shipmate.shipmate",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location"
+        ],
+        "NSLocationWhenInUseUsageDescription": "Shipmate requires access to your location to show available courier jobs, calculate delivery routes, and provide real-time package tracking.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Shipmate uses your location in the background to provide live GPS tracking to customers during active delivery trips.",
+        "NSCameraUsageDescription": "Shipmate requires camera access to capture photo proof of delivery and photograph driver verification documents.",
+        "NSPhotoLibraryUsageDescription": "Shipmate requires photo library access to upload driver licenses, vehicle documents, and delivery proof photos."
+      }
     },
     "android": {
       "package": "com.shipmate.shipmate",
-      "versionCode": 19,
+      "versionCode": 20,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ],
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyPlaceholderGoogleMapsKeyForAndroid"
+          "apiKey": "AIzaSyC5wMs1-PtvFzF_Jozb14FJMwsrkLiQt3o"
         }
       },
       "adaptiveIcon": {
@@ -40,6 +57,15 @@
         "projectId": "ffd47272-3882-40d0-b2d3-9bbfb92e769b"
       }
     },
-    "owner": "shipmate.co.zw"
+    "owner": "shipmate.co.zw",
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#055FEE"
+        }
+      ]
+    ]
   }
 }

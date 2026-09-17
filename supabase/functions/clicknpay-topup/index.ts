@@ -96,6 +96,7 @@ serve(async (req: any) => {
                 customerPhoneNumber: customerPhone,
                 description: `ShipMate Courier Wallet Top-up - $${grossAmount.toFixed(2)} USD`,
                 multiplePayments: true,
+                orderType: "DYNAMIC",
                 orderYpe: "DYNAMIC",
                 productsList: [
                     {

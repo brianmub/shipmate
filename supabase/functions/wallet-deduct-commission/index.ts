@@ -59,29 +59,43 @@ serve(async (req: any) => {
         // BUSINESS RULE: Minimum platform charge per job is $2 USD
         const commissionBase = Math.max(deliveryFee, 2.00)
         const commissionAmount = Math.round(commissionBase * commissionRate * 100) / 100
+        const paymentMethod = newRecord.payment_method || 'cash_on_delivery'
 
-        console.log(`Deducting commission of $${commissionAmount} (${commissionRate * 100}% rate, base fee $${deliveryFee}) for driver ${courierId} on job ${jobId}`)
+        console.log(`Processing ${paymentMethod} delivery settlement for driver ${courierId} on job ${jobId} (fee: $${deliveryFee}, commission: $${commissionAmount})`)
 
-        // Call database RPC function for atomic deduction
-        const { data: rpcResult, error: rpcError } = await supabaseClient.rpc('deduct_commission_rpc', {
-            p_courier_id: courierId,
-            p_amount: commissionAmount,
-            p_job_id: jobId
+        // Attempt unified settlement RPC
+        const { data: settleResult, error: settleError } = await supabaseClient.rpc('settle_order_payment_rpc', {
+            p_order_id: jobId,
+            p_driver_id: courierId
         })
 
-        if (rpcError) {
-            throw rpcError
-        }
+        let oldBalance = 0
+        let newBalance = 0
+        let newStatus = 'active'
 
-        // rpcResult returns an array/object with old_balance, new_balance, and new_status
-        const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult
-        if (!result) {
-            throw new Error("RPC returned no result")
-        }
+        if (!settleError && settleResult && settleResult.success) {
+            console.log("Unified settlement RPC completed successfully:", settleResult)
+            newBalance = parseFloat(settleResult.float_balance || 0)
+        } else {
+            console.warn("settle_order_payment_rpc fallback to legacy deduct_commission_rpc:", settleError?.message)
+            // Call database RPC function for atomic deduction
+            const { data: rpcResult, error: rpcError } = await supabaseClient.rpc('deduct_commission_rpc', {
+                p_courier_id: courierId,
+                p_amount: commissionAmount,
+                p_job_id: jobId
+            })
 
-        const oldBalance = parseFloat(result.old_balance)
-        const newBalance = parseFloat(result.new_balance)
-        const newStatus = result.new_status
+            if (rpcError) {
+                throw rpcError
+            }
+
+            const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult
+            if (result) {
+                oldBalance = parseFloat(result.old_balance)
+                newBalance = parseFloat(result.new_balance)
+                newStatus = result.new_status
+            }
+        }
 
         console.log(`Commission deducted successfully. Old Balance: $${oldBalance}, New Balance: $${newBalance}, Status: ${newStatus}`)
 

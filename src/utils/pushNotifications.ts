@@ -78,3 +78,19 @@ export async function registerForPushNotificationsAsync(userId: string) {
         return null;
     }
 }
+
+/**
+ * Listen for notification interactions (e.g. courier tapping priority dispatch notification)
+ */
+export function setupNotificationResponseListener(onNotificationClick: (data: any) => void) {
+    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+        const data = response.notification.request.content.data;
+        if (data && onNotificationClick) {
+            onNotificationClick(data);
+        }
+    });
+
+    return () => {
+        subscription.remove();
+    };
+}

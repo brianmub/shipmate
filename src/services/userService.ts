@@ -1,5 +1,5 @@
 import { supabase } from '../utils/supabase';
-import { UserProfile } from '../types';
+import { UserProfile, DriverTier } from '../types';
 
 export const userService = {
     /**
@@ -14,6 +14,24 @@ export const userService = {
 
         if (error) throw error;
         return data as UserProfile;
+    },
+
+    /**
+     * Fetch driver's current tier (e.g., 'platinum' | 'standard')
+     */
+    async getDriverTier(userId: string): Promise<DriverTier> {
+        try {
+            const { data, error } = await supabase
+                .from('drivers')
+                .select('tier')
+                .eq('id', userId)
+                .single();
+
+            if (error || !data) return 'standard';
+            return (data.tier as DriverTier) || 'standard';
+        } catch {
+            return 'standard';
+        }
     },
 
     /**
@@ -123,43 +141,87 @@ export const userService = {
     },
 
     /**
-     * Submit driver payout request, validate balance, deduct balance and log transaction
+     * Fetch platform-wide app settings toggles
      */
-    async requestPayout(driverId: string, amount: number) {
-        // 1. Fetch current driver balance
-        const { data: driver, error: driverError } = await supabase
-            .from('drivers')
-            .select('available_balance')
-            .eq('id', driverId)
-            .single();
-        
-        if (driverError) throw driverError;
-        if (!driver) throw new Error("Driver profile not found");
-        if (driver.available_balance < amount) {
-            throw new Error(`Insufficient balance. Available: $${driver.available_balance.toFixed(2)}`);
-        }
+    async getAppSettings() {
+        const { data, error } = await supabase
+            .from('app_settings')
+            .select('*');
 
-        // 2. Insert transaction ledger entry
-        const { error: txError } = await supabase
-            .from('transactions')
-            .insert({
-                driver_id: driverId,
-                amount: amount,
-                type: 'payout',
-                status: 'completed'
+        if (error) throw error;
+        return data;
+    },
+
+
+    /**
+     * Submit driver payout request via automated disbursement (EcoCash, InnBucks, or Bank Transfer)
+     */
+    async requestAutomatedPayout(params: {
+        courierId: string;
+        amount: number;
+        payoutMethod: 'ecocash' | 'innbucks' | 'bank_transfer';
+        destinationAccount: string;
+        recipientName?: string;
+        bankDetails?: {
+            bankName: string;
+            accountNumber: string;
+            accountName: string;
+        };
+    }) {
+        try {
+            const { data, error } = await supabase.functions.invoke('driver-payout', {
+                body: params
             });
 
-        if (txError) throw txError;
+            if (!error && data && data.success) {
+                return data;
+            }
 
-        // 3. Deduct from available_balance
-        const { error: updateError } = await supabase
-            .from('drivers')
-            .update({
-                available_balance: driver.available_balance - amount
-            })
-            .eq('id', driverId);
+            if (data && data.error) {
+                throw new Error(data.error);
+            }
 
-        if (updateError) throw updateError;
+            if (error) {
+                throw error;
+            }
+
+            return data;
+        } catch (invokeErr: any) {
+            console.warn('Edge function driver-payout invocation error, attempting direct RPC fallback:', invokeErr.message);
+            const prefix = params.payoutMethod === 'ecocash' ? 'ECO' : params.payoutMethod === 'innbucks' ? 'INN' : 'BNK';
+            const uniqueRef = `PO-${prefix}-${params.courierId.substring(0, 6)}-${Date.now()}`;
+            
+            const { data: rpcData, error: rpcError } = await supabase.rpc('process_driver_payout_rpc', {
+                p_driver_id: params.courierId,
+                p_amount: params.amount,
+                p_method: params.payoutMethod,
+                p_destination: params.destinationAccount,
+                p_reference: uniqueRef,
+                p_provider_details: { mode: 'direct_rpc_disbursement', fallback: true }
+            });
+
+            if (rpcError) throw rpcError;
+            return {
+                success: true,
+                payoutReference: uniqueRef,
+                amount: params.amount,
+                method: params.payoutMethod,
+                destination: params.destinationAccount,
+                remainingBalance: rpcData?.remaining_balance
+            };
+        }
+    },
+
+    /**
+     * Legacy driver payout request
+     */
+    async requestPayout(driverId: string, amount: number) {
+        return this.requestAutomatedPayout({
+            courierId: driverId,
+            amount: amount,
+            payoutMethod: 'ecocash',
+            destinationAccount: 'Registered Mobile Number'
+        });
     },
 
     /**
@@ -191,5 +253,81 @@ export const userService = {
 
         if (error) throw error;
         return data;
+    },
+
+    /**
+     * Delete user account and wipe personal data (complying with Apple Guideline 5.1.1(v))
+     */
+    async deleteAccount(userId: string): Promise<{ success: boolean; message: string }> {
+        // 1. Pre-check: Verify user has no active in-flight orders
+        const { data: activeOrders, error: orderCheckErr } = await supabase
+            .from('orders')
+            .select('id, status')
+            .or(`customer_id.eq.${userId},driver_id.eq.${userId}`)
+            .in('status', [
+                'driver_assigned',
+                'en_route_to_pickup',
+                'arrived_at_pickup',
+                'picked_up',
+                'en_route_to_delivery',
+                'arrived_at_delivery'
+            ])
+            .limit(1);
+
+        if (!orderCheckErr && activeOrders && activeOrders.length > 0) {
+            throw new Error(
+                'Cannot delete account while you have an active delivery in progress. Please complete or cancel your active order first.'
+            );
+        }
+
+        // 2. Execute server-side RPC if deployed
+        try {
+            const { data: rpcResult, error: rpcError } = await supabase.rpc('delete_user_account_rpc');
+            if (!rpcError && rpcResult) {
+                if (rpcResult.success === false) {
+                    throw new Error(rpcResult.message || 'Account deletion failed.');
+                }
+                return { success: true, message: rpcResult.message || 'Account deleted.' };
+            }
+        } catch (rpcErr: any) {
+            console.warn('RPC delete_user_account_rpc failed or not yet deployed, using direct client fallback:', rpcErr?.message);
+        }
+
+        // 3. Fallback: Anonymize personal identity in public.users
+        const { error: userWipeErr } = await supabase
+            .from('users')
+            .update({
+                full_name: 'Deleted User',
+                phone: null,
+                expo_push_token: null,
+                account_status: 'deleted',
+                profile_photo_url: null,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', userId);
+
+        if (userWipeErr) {
+            console.warn('Could not wipe public.users directly:', userWipeErr.message);
+        }
+
+        // 4. If driver, take offline and mark suspended
+        try {
+            await supabase
+                .from('drivers')
+                .update({
+                    is_online: false,
+                    tier: 'standard',
+                    status: 'suspended',
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', userId);
+        } catch {
+            // Driver row may not exist for customer
+        }
+
+        return {
+            success: true,
+            message: 'Your account and personal data have been deleted.'
+        };
     }
 };

@@ -1,5 +1,5 @@
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useEffect } from 'react';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { useAuthStore } from '../store/authStore';
@@ -13,8 +13,11 @@ import { WelcomeScreen } from '../screens/auth/WelcomeScreen';
 import { SignInScreen } from '../screens/auth/SignInScreen';
 import { SignUpScreen } from '../screens/auth/SignUpScreen';
 import { ForgotPasswordScreen } from '../screens/auth/ForgotPasswordScreen';
+import { userService } from '../services/userService';
+import { registerForPushNotificationsAsync, setupNotificationResponseListener } from '../utils/pushNotifications';
 
 const Stack = createNativeStackNavigator();
+export const navigationRef = createNavigationContainerRef<any>();
 
 // Auth Stack
 const AuthStack = () => (
@@ -26,17 +29,34 @@ const AuthStack = () => (
     </Stack.Navigator>
 );
 
-import { useEffect } from 'react';
-import { userService } from '../services/userService';
-
 export const RootNavigator = () => {
     const { session, role, setVerificationStatus } = useAuthStore();
 
     useEffect(() => {
         if (session && role === 'driver') {
             fetchDriverStatus();
+            // Ensure push token is active for priority dispatches
+            registerForPushNotificationsAsync(session.user.id);
         }
     }, [session, role]);
+
+    useEffect(() => {
+        // Deep link listener for notification taps
+        const unsubscribe = setupNotificationResponseListener((data) => {
+            if (data?.orderId && navigationRef.isReady()) {
+                if (role === 'driver') {
+                    navigationRef.navigate('DriverApp', {
+                        screen: 'Jobs',
+                        params: { orderId: data.orderId, isPriority: data.isPlatinumPriority }
+                    });
+                }
+            }
+        });
+
+        return () => {
+            unsubscribe();
+        };
+    }, [role]);
 
     const fetchDriverStatus = async () => {
         try {
@@ -48,7 +68,7 @@ export const RootNavigator = () => {
     };
 
     return (
-        <NavigationContainer>
+        <NavigationContainer ref={navigationRef}>
             <Stack.Navigator screenOptions={{ headerShown: false }}>
                 {!session ? (
                     <Stack.Screen name="Auth" component={AuthStack} />

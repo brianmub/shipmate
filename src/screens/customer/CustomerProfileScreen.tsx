@@ -1,48 +1,145 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../store/authStore';
+import { userService } from '../../services/userService';
+import { supabase } from '../../utils/supabase';
+import { DeleteAccountModal } from '../../components/DeleteAccountModal';
 
 export const CustomerProfileScreen = () => {
     const { signOut, user } = useAuthStore();
+    const [profile, setProfile] = useState<any>(null);
+    const [loading, setLoading] = useState(false);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+
+    const displayName = profile?.full_name || user?.user_metadata?.full_name || 'Customer';
+    const displayEmail = user?.email || profile?.phone || 'Account Member';
+    const initials = displayName.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase() || 'CU';
+
+    const loadProfile = async () => {
+        if (!user) return;
+        try {
+            setLoading(true);
+            const data = await userService.getUserProfile(user.id);
+            setProfile(data);
+        } catch (error) {
+            console.error('Error fetching customer profile:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadProfile();
+    }, [user?.id]);
+
+    const handleConfirmDelete = async () => {
+        if (!user) return;
+        try {
+            setDeleting(true);
+            await userService.deleteAccount(user.id);
+            setShowDeleteModal(false);
+            
+            Alert.alert(
+                'Account Deleted',
+                'Your Shipmate account and personal data have been permanently wiped.',
+                [
+                    {
+                        text: 'OK',
+                        onPress: async () => {
+                            await supabase.auth.signOut();
+                            signOut();
+                        }
+                    }
+                ]
+            );
+        } catch (err: any) {
+            Alert.alert('Deletion Failed', err?.message || 'Could not delete account. Please try again.');
+        } finally {
+            setDeleting(false);
+        }
+    };
 
     return (
         <SafeAreaView style={styles.safeArea}>
-            <View style={styles.container}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
                 <Text style={styles.header}>Profile</Text>
 
                 <View style={styles.profileCard}>
                     <View style={styles.avatarContainer}>
-                        <Text style={styles.avatarText}>JD</Text>
+                        <Text style={styles.avatarText}>{initials}</Text>
                     </View>
                     <View style={styles.infoContainer}>
-                        <Text style={styles.nameText}>John Doe</Text>
-                        <Text style={styles.emailText}>john.doe@example.com</Text>
+                        <Text style={styles.nameText}>{displayName}</Text>
+                        <Text style={styles.emailText}>{displayEmail}</Text>
                         <View style={styles.badgeContainer}>
                             <Text style={styles.badgeText}>Customer</Text>
                         </View>
                     </View>
                 </View>
 
+                {/* Settings Group */}
                 <View style={styles.settingsGroup}>
-                    <TouchableOpacity style={styles.settingItem}>
+                    <TouchableOpacity style={styles.settingItem} activeOpacity={0.7}>
                         <Text style={styles.settingIcon}>📍</Text>
                         <Text style={styles.settingText}>Saved Addresses</Text>
+                        <Text style={styles.chevron}>›</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.settingItem}>
+                    <TouchableOpacity style={styles.settingItem} activeOpacity={0.7}>
                         <Text style={styles.settingIcon}>💳</Text>
                         <Text style={styles.settingText}>Payment Methods</Text>
+                        <Text style={styles.chevron}>›</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.settingItem}>
+                    <TouchableOpacity style={styles.settingItem} activeOpacity={0.7}>
                         <Text style={styles.settingIcon}>🔔</Text>
                         <Text style={styles.settingText}>Notifications</Text>
+                        <Text style={styles.chevron}>›</Text>
                     </TouchableOpacity>
                 </View>
 
-                <TouchableOpacity style={styles.logoutButton} onPress={signOut}>
+                {/* Account Management & Apple Guideline 5.1.1(v) Compliance */}
+                <View style={styles.dangerGroup}>
+                    <Text style={styles.dangerGroupTitle}>Account Management</Text>
+                    <View style={styles.dangerCard}>
+                        <TouchableOpacity
+                            style={styles.deleteItem}
+                            activeOpacity={0.7}
+                            onPress={() => setShowDeleteModal(true)}
+                        >
+                            <View style={styles.deleteIconBox}>
+                                <Text style={styles.deleteIcon}>🗑️</Text>
+                            </View>
+                            <View style={styles.deleteTextWrapper}>
+                                <Text style={styles.deleteTitle}>Delete Account & Wipe Data</Text>
+                                <Text style={styles.deleteSubtitle}>Permanently remove your profile, data & login credentials</Text>
+                            </View>
+                            <Text style={styles.chevronDanger}>›</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+
+                <TouchableOpacity 
+                    style={styles.logoutButton} 
+                    activeOpacity={0.8}
+                    onPress={async () => {
+                        await supabase.auth.signOut();
+                        signOut();
+                    }}
+                >
                     <Text style={styles.logoutButtonText}>Sign Out</Text>
                 </TouchableOpacity>
-            </View>
+
+                <Text style={styles.versionText}>Shipmate Version 2.0.3</Text>
+            </ScrollView>
+
+            <DeleteAccountModal
+                visible={showDeleteModal}
+                onClose={() => setShowDeleteModal(false)}
+                onConfirmDelete={handleConfirmDelete}
+                userRole="customer"
+                deleting={deleting}
+            />
         </SafeAreaView>
     );
 };
@@ -50,76 +147,81 @@ export const CustomerProfileScreen = () => {
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: '#F8FAFC',
     },
-    container: {
-        flex: 1,
+    scrollContent: {
+        paddingBottom: 40,
     },
     header: {
         fontSize: 28,
-        fontWeight: 'bold',
-        marginBottom: 20,
-        color: '#333',
+        fontWeight: '800',
+        marginBottom: 16,
+        color: '#0F172A',
         paddingHorizontal: 24,
         paddingTop: 16,
+        letterSpacing: -0.5,
     },
     profileCard: {
-        backgroundColor: '#fff',
+        backgroundColor: '#FFFFFF',
         flexDirection: 'row',
         padding: 24,
         marginBottom: 24,
         borderBottomWidth: 1,
-        borderBottomColor: '#eee',
+        borderBottomColor: '#E2E8F0',
         borderTopWidth: 1,
-        borderTopColor: '#eee',
+        borderTopColor: '#E2E8F0',
+        alignItems: 'center',
     },
     avatarContainer: {
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        backgroundColor: '#0056D2',
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: '#055FEE',
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 16,
     },
     avatarText: {
-        color: '#fff',
+        color: '#FFFFFF',
         fontSize: 24,
-        fontWeight: 'bold',
+        fontWeight: '800',
     },
     infoContainer: {
+        flex: 1,
         justifyContent: 'center',
     },
     nameText: {
         fontSize: 18,
-        fontWeight: 'bold',
-        color: '#333',
-        marginBottom: 4,
+        fontWeight: '700',
+        color: '#0F172A',
+        marginBottom: 2,
     },
     emailText: {
-        fontSize: 14,
-        color: '#666',
+        fontSize: 13,
+        color: '#64748B',
         marginBottom: 8,
     },
     badgeContainer: {
-        backgroundColor: '#E3F2FD',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 4,
+        backgroundColor: '#EFF6FF',
+        paddingHorizontal: 10,
+        paddingVertical: 3,
+        borderRadius: 6,
         alignSelf: 'flex-start',
+        borderWidth: 1,
+        borderColor: '#BFDBFE',
     },
     badgeText: {
-        color: '#0056D2',
-        fontSize: 12,
-        fontWeight: '600',
+        color: '#1D4ED8',
+        fontSize: 11,
+        fontWeight: '700',
     },
     settingsGroup: {
-        backgroundColor: '#fff',
+        backgroundColor: '#FFFFFF',
         borderBottomWidth: 1,
-        borderBottomColor: '#eee',
+        borderBottomColor: '#E2E8F0',
         borderTopWidth: 1,
-        borderTopColor: '#eee',
-        marginBottom: 32,
+        borderTopColor: '#E2E8F0',
+        marginBottom: 24,
     },
     settingItem: {
         flexDirection: 'row',
@@ -127,28 +229,98 @@ const styles = StyleSheet.create({
         paddingVertical: 16,
         paddingHorizontal: 24,
         borderBottomWidth: 1,
-        borderBottomColor: '#f5f5f5',
+        borderBottomColor: '#F1F5F9',
     },
     settingIcon: {
-        fontSize: 20,
+        fontSize: 18,
         marginRight: 16,
     },
     settingText: {
-        fontSize: 16,
-        color: '#333',
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#1E293B',
+        flex: 1,
+    },
+    chevron: {
+        fontSize: 20,
+        color: '#94A3B8',
+        fontWeight: '400',
+    },
+    dangerGroup: {
+        paddingHorizontal: 24,
+        marginBottom: 28,
+    },
+    dangerGroupTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#64748B',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginBottom: 8,
+    },
+    dangerCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#FEE2E2',
+        overflow: 'hidden',
+    },
+    deleteItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        backgroundColor: '#FEF2F2',
+    },
+    deleteIconBox: {
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        backgroundColor: '#FEE2E2',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 14,
+    },
+    deleteIcon: {
+        fontSize: 18,
+    },
+    deleteTextWrapper: {
+        flex: 1,
+    },
+    deleteTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#DC2626',
+        marginBottom: 2,
+    },
+    deleteSubtitle: {
+        fontSize: 11,
+        color: '#991B1B',
+        lineHeight: 15,
+    },
+    chevronDanger: {
+        fontSize: 20,
+        color: '#EF4444',
+        fontWeight: '400',
     },
     logoutButton: {
-        backgroundColor: '#fff',
-        padding: 16,
+        backgroundColor: '#FFFFFF',
+        paddingVertical: 16,
         marginHorizontal: 24,
-        borderRadius: 8,
+        borderRadius: 14,
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: '#ff3b30',
+        borderColor: '#CBD5E1',
+        marginBottom: 16,
     },
     logoutButtonText: {
-        color: '#ff3b30',
-        fontSize: 16,
-        fontWeight: '600',
+        color: '#475569',
+        fontSize: 15,
+        fontWeight: '700',
+    },
+    versionText: {
+        textAlign: 'center',
+        fontSize: 12,
+        color: '#94A3B8',
+        fontWeight: '500',
     },
 });

@@ -16,3 +16,5 @@ yarn-error.log*
 *.orig.*
 web-build/
 .metadata
+scratch/
+*.zip

@@ -31,6 +31,25 @@ export const ChatScreen = ({ route, navigation }: any) => {
     
     const flatListRef = useRef<FlatList>(null);
 
+    const isDriver = user?.role === 'driver';
+    const quickReplies = isDriver ? [
+        "🚗 Arrived at pickup",
+        "🚦 Stuck in traffic (~5m delay)",
+        "📍 Outside the building",
+        "📦 Package collected & en route",
+        "✅ Arrived at delivery location"
+    ] : [
+        "🚪 Please leave at the door",
+        "🏢 Gate code / Apt details",
+        "👋 Coming down right now",
+        "🛡️ Leave with security/reception",
+        "📞 Please call when outside"
+    ];
+
+    const handleQuickReply = (text: string) => {
+        setInputText(text);
+    };
+
     useEffect(() => {
         if (!orderId) {
             setLoading(false);
@@ -41,6 +60,9 @@ export const ChatScreen = ({ route, navigation }: any) => {
             try {
                 const history = await chatService.getMessages(orderId);
                 setMessages(history);
+                if (user) {
+                    chatService.markAsRead(orderId, user.id);
+                }
             } catch (error) {
                 console.error('Error loading chat messages:', error);
             } finally {
@@ -58,6 +80,9 @@ export const ChatScreen = ({ route, navigation }: any) => {
                     if (prev.some((msg) => msg.id === payload.new.id)) return prev;
                     return [...prev, payload.new];
                 });
+                if (user && payload.new.sender_id !== user.id) {
+                    chatService.markAsRead(orderId, user.id);
+                }
             }
         });
 
@@ -129,9 +154,12 @@ export const ChatScreen = ({ route, navigation }: any) => {
                     <Text style={[styles.messageText, isMe ? styles.myMessageText : styles.theirMessageText]}>
                         {item.message_text}
                     </Text>
-                    <Text style={[styles.timestampText, isMe ? styles.myTimestampText : styles.theirTimestampText]}>
-                        {time}
-                    </Text>
+                    <View style={styles.timestampRow}>
+                        <Text style={[styles.timestampText, isMe ? styles.myTimestampText : styles.theirTimestampText]}>
+                            {time}
+                        </Text>
+                        {isMe && <Text style={styles.readCheck}> ✓✓</Text>}
+                    </View>
                 </View>
             </View>
         );
@@ -199,6 +227,26 @@ export const ChatScreen = ({ route, navigation }: any) => {
                             }}
                         />
                     )}
+
+                    {/* Quick Reply Chips */}
+                    <View style={styles.quickRepliesContainer}>
+                        <FlatList
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            data={quickReplies}
+                            keyExtractor={(_, i) => i.toString()}
+                            contentContainerStyle={styles.quickRepliesContent}
+                            renderItem={({ item }) => (
+                                <TouchableOpacity 
+                                    style={styles.quickReplyChip}
+                                    activeOpacity={0.7}
+                                    onPress={() => handleQuickReply(item)}
+                                >
+                                    <Text style={styles.quickReplyText}>{item}</Text>
+                                </TouchableOpacity>
+                            )}
+                        />
+                    </View>
 
                     {/* Input Bar */}
                     <BlurView intensity={50} tint="light" style={styles.inputContainer}>
@@ -376,16 +424,54 @@ const styles = StyleSheet.create({
         color: '#1E293B',
         fontWeight: '500',
     },
+    timestampRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-end',
+        marginTop: 4,
+    },
     timestampText: {
         fontSize: 10,
-        marginTop: 4,
-        alignSelf: 'flex-end',
     },
     myTimestampText: {
         color: 'rgba(255,255,255,0.7)',
     },
     theirTimestampText: {
         color: '#94A3B8',
+    },
+    readCheck: {
+        fontSize: 10,
+        color: '#60A5FA',
+        fontWeight: 'bold',
+        marginLeft: 2,
+    },
+    quickRepliesContainer: {
+        paddingVertical: 8,
+        backgroundColor: 'rgba(255, 255, 255, 0.6)',
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(0, 0, 0, 0.05)',
+    },
+    quickRepliesContent: {
+        paddingHorizontal: 16,
+        gap: 8,
+    },
+    quickReplyChip: {
+        backgroundColor: '#FFFFFF',
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+        elevation: 1,
+    },
+    quickReplyText: {
+        fontSize: 13,
+        color: '#334155',
+        fontWeight: '500',
     },
     inputContainer: {
         flexDirection: 'row',

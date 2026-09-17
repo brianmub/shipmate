@@ -8,20 +8,36 @@ import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../utils/supabase';
 import { JobOfferModal } from '../../components/JobOfferModal';
 import { userService } from '../../services/userService';
+import { DriverTier } from '../../types';
 
-export const DriverJobsScreen = ({ navigation }: any) => {
+export const DriverJobsScreen = ({ navigation, route }: any) => {
     const { user } = useAuthStore();
     const [jobs, setJobs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [isVerified, setIsVerified] = useState<boolean | null>(null);
     const [walletStatus, setWalletStatus] = useState<string>('active');
     const [walletBalance, setWalletBalance] = useState<number | null>(null);
+    const [driverTier, setDriverTier] = useState<DriverTier>('standard');
+    const [currentTime, setCurrentTime] = useState(Date.now());
     const [selectedJob, setSelectedJob] = useState<any>(null);
     const [offerModalVisible, setOfferModalVisible] = useState(false);
     const [acceptingId, setAcceptingId] = useState<string | null>(null);
     const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
     const [declinedJobIds, setDeclinedJobIds] = useState<string[]>([]);
     const activeChannelRef = useRef<any>(null);
+
+    // Deep link or notification target: focus and open offer sheet for target job
+    useEffect(() => {
+        const targetOrderId = route?.params?.orderId;
+        if (targetOrderId && jobs.length > 0) {
+            const targetJob = jobs.find(j => j.id === targetOrderId);
+            if (targetJob) {
+                setExpandedJobId(targetOrderId);
+                setSelectedJob(targetJob);
+                setOfferModalVisible(true);
+            }
+        }
+    }, [route?.params?.orderId, jobs]);
 
     useEffect(() => {
         if (activeChannelRef.current) {
@@ -85,10 +101,31 @@ export const DriverJobsScreen = ({ navigation }: any) => {
         }
     };
 
-    const fetchPendingJobs = async () => {
+    useEffect(() => {
+        const timer = setInterval(() => {
+            setCurrentTime(Date.now());
+        }, 1000);
+        return () => clearInterval(timer);
+    }, []);
+
+    const checkDriverTier = async (): Promise<DriverTier> => {
+        if (!user) return 'standard';
+        try {
+            const tier = await userService.getDriverTier(user.id);
+            setDriverTier(tier);
+            return tier;
+        } catch (error) {
+            console.error('Error checking driver tier:', error);
+            setDriverTier('standard');
+            return 'standard';
+        }
+    };
+
+    const fetchPendingJobs = async (tierOverride?: DriverTier) => {
         try {
             setLoading(true);
-            const data = await orderService.getAvailableJobs();
+            const tier = tierOverride || driverTier;
+            const data = await orderService.getAvailableJobs(tier);
             setJobs(data || []);
         } catch (error: any) {
             console.error('Error fetching jobs:', error.message);
@@ -132,22 +169,25 @@ export const DriverJobsScreen = ({ navigation }: any) => {
     };
 
     useEffect(() => {
-        // Refresh when focused
-        const unsubscribe = navigation.addListener('focus', () => {
+        const loadScreenData = async () => {
             checkVerificationStatus();
             checkWalletStatus();
-            fetchPendingJobs();
+            const tier = await checkDriverTier();
+            fetchPendingJobs(tier);
+        };
+
+        // Refresh when focused
+        const unsubscribe = navigation.addListener('focus', () => {
+            loadScreenData();
         });
 
         // Run initially
-        checkVerificationStatus();
-        checkWalletStatus();
-        fetchPendingJobs();
+        loadScreenData();
 
-        // Optional: Subscribe to new orders here if realtime is enabled
+        // Realtime subscription for incoming orders
         const channel = supabase
             .channel('public:orders')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
                 fetchPendingJobs();
             })
             .subscribe();
@@ -156,16 +196,34 @@ export const DriverJobsScreen = ({ navigation }: any) => {
             unsubscribe();
             supabase.removeChannel(channel);
         };
-    }, [navigation]);
+    }, [navigation, user]);
 
 
 
     const renderJobCard = ({ item }: { item: any }) => {
         const isDelivery = item.service_type === 'delivery';
         const isExpanded = expandedJobId === item.id;
+        const priorityWindowEnds = item.priority_window_ends_at ? new Date(item.priority_window_ends_at).getTime() : 0;
+        const isPriorityActive = priorityWindowEnds > currentTime;
+        const secondsRemaining = Math.max(0, Math.ceil((priorityWindowEnds - currentTime) / 1000));
 
         return (
             <BlurView intensity={40} tint="light" style={styles.cardContainer}>
+                {isPriorityActive && (
+                    <View style={styles.priorityPillContainer}>
+                        <LinearGradient
+                            colors={['#7C3AED', '#4F46E5']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={styles.priorityPill}
+                        >
+                            <Text style={styles.priorityPillText}>
+                                ⚡ PLATINUM EARLY ACCESS • {secondsRemaining}s LEFT
+                            </Text>
+                        </LinearGradient>
+                    </View>
+                )}
+
                 <TouchableOpacity
                     activeOpacity={0.9}
                     onPress={() => setExpandedJobId(isExpanded ? null : item.id)}
@@ -185,8 +243,25 @@ export const DriverJobsScreen = ({ navigation }: any) => {
                         </View>
                     </View>
 
-                    {/* In a real app we would calculate real distance between driver and pickup */}
-                    <Text style={styles.distanceText}>📍 2.4 miles away</Text>
+                    {/* Distance and Payment Method Badges */}
+                    <View style={styles.cardBadgeRow}>
+                        <Text style={styles.distanceText}>📍 2.4 miles away</Text>
+                        <View style={[
+                            styles.jobPaymentBadge,
+                            item.payment_method === 'cash_on_delivery' 
+                                ? styles.jobPaymentBadgeCod 
+                                : styles.jobPaymentBadgeDigital
+                        ]}>
+                            <Text style={[
+                                styles.jobPaymentBadgeText,
+                                item.payment_method === 'cash_on_delivery' 
+                                    ? styles.jobPaymentBadgeTextCod 
+                                    : styles.jobPaymentBadgeTextDigital
+                            ]}>
+                                {item.payment_method === 'cash_on_delivery' ? '💵 Cash' : '💳 Digital'}
+                            </Text>
+                        </View>
+                    </View>
 
                     <View style={styles.locationContainer}>
                         {isDelivery ? (
@@ -293,6 +368,51 @@ export const DriverJobsScreen = ({ navigation }: any) => {
 
     const visibleJobs = jobs.filter(job => !declinedJobIds.includes(job.id));
 
+    const renderListHeader = () => {
+        if (isVerified === false || (walletStatus === 'locked' && (walletBalance || 0) < 0)) {
+            return null;
+        }
+
+        if (driverTier === 'platinum') {
+            return (
+                <View style={styles.bannerOuterContainer}>
+                    <LinearGradient
+                        colors={['#7C3AED', '#4F46E5']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.platinumBanner}
+                    >
+                        <View style={styles.platinumBannerRow}>
+                            <View style={styles.platinumIconCircle}>
+                                <Text style={styles.platinumIconText}>🏆</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.platinumBannerTitle}>PLATINUM COURIER</Text>
+                                <Text style={styles.platinumBannerSub}>30-second early priority access active for incoming requests.</Text>
+                            </View>
+                        </View>
+                    </LinearGradient>
+                </View>
+            );
+        }
+
+        return (
+            <View style={styles.bannerOuterContainer}>
+                <View style={styles.tierPromoCard}>
+                    <View style={styles.tierPromoIconCircle}>
+                        <Text style={{ fontSize: 20 }}>⚡</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                        <Text style={styles.tierPromoTitle}>Unlock 30s Early Job Access</Text>
+                        <Text style={styles.tierPromoSub}>
+                            Reach 50+ trips, 4.85★ rating, and 95% completion to earn Platinum Priority.
+                        </Text>
+                    </View>
+                </View>
+            </View>
+        );
+    };
+
     return (
         <LinearGradient
             colors={['#F8FAFC', '#E2E8F0']}
@@ -307,10 +427,12 @@ export const DriverJobsScreen = ({ navigation }: any) => {
                         <Text style={styles.headerTitle}>Available Jobs</Text>
                         <Text style={styles.headerSubtitle}>Swipe to refresh</Text>
                     </View>
-                    <TouchableOpacity onPress={fetchPendingJobs} style={styles.refreshButton}>
+                    <TouchableOpacity onPress={() => fetchPendingJobs()} style={styles.refreshButton}>
                         <Text style={styles.refreshText}>↻</Text>
                     </TouchableOpacity>
                 </View>
+
+                {renderListHeader()}
 
                 {isVerified === false ? (
                     <View style={styles.centerContainer}>
@@ -709,5 +831,122 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
         color: '#5B99F2',
+    },
+    bannerOuterContainer: {
+        paddingHorizontal: 24,
+        marginBottom: 12,
+    },
+    platinumBanner: {
+        borderRadius: 16,
+        padding: 14,
+        shadowColor: '#7C3AED',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    platinumBannerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    platinumIconCircle: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    platinumIconText: {
+        fontSize: 18,
+    },
+    platinumBannerTitle: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: '#FFFFFF',
+        letterSpacing: 0.5,
+    },
+    platinumBannerSub: {
+        fontSize: 12,
+        color: 'rgba(255, 255, 255, 0.85)',
+        marginTop: 2,
+    },
+    tierPromoCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        borderRadius: 16,
+        padding: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(203, 213, 225, 0.8)',
+    },
+    tierPromoIconCircle: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(245, 158, 11, 0.15)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    tierPromoTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#0F172A',
+    },
+    tierPromoSub: {
+        fontSize: 11,
+        color: '#64748B',
+        marginTop: 2,
+    },
+    priorityPillContainer: {
+        marginBottom: 10,
+        borderRadius: 12,
+        overflow: 'hidden',
+    },
+    priorityPill: {
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    priorityPillText: {
+        color: '#FFFFFF',
+        fontSize: 11,
+        fontWeight: '800',
+        letterSpacing: 0.5,
+    },
+    // Card Badge & Payment Styles
+    cardBadgeRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+    },
+    jobPaymentBadge: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 8,
+    },
+    jobPaymentBadgeCod: {
+        backgroundColor: '#FEF3C7',
+        borderWidth: 1,
+        borderColor: '#F59E0B',
+    },
+    jobPaymentBadgeDigital: {
+        backgroundColor: '#ECFDF5',
+        borderWidth: 1,
+        borderColor: '#10B981',
+    },
+    jobPaymentBadgeText: {
+        fontSize: 11,
+        fontWeight: '800',
+    },
+    jobPaymentBadgeTextCod: {
+        color: '#B45309',
+    },
+    jobPaymentBadgeTextDigital: {
+        color: '#065F46',
     },
 });
