@@ -30,7 +30,7 @@ const AuthStack = () => (
 );
 
 export const RootNavigator = () => {
-    const { session, role, setVerificationStatus } = useAuthStore();
+    const { session, role, setVerificationStatus, setRejectionReason } = useAuthStore();
 
     useEffect(() => {
         if (session && role === 'driver') {
@@ -43,10 +43,10 @@ export const RootNavigator = () => {
     useEffect(() => {
         // Deep link listener for notification taps
         const unsubscribe = setupNotificationResponseListener((data) => {
-            if (data?.orderId && navigationRef.isReady()) {
-                if (role === 'driver') {
+            if (data?.type === 'PRIORITY_OFFER' && data?.orderId) {
+                if (navigationRef.isReady()) {
                     navigationRef.navigate('DriverApp', {
-                        screen: 'Jobs',
+                        screen: 'ActiveJob',
                         params: { orderId: data.orderId, isPriority: data.isPlatinumPriority }
                     });
                 }
@@ -60,8 +60,9 @@ export const RootNavigator = () => {
 
     const fetchDriverStatus = async () => {
         try {
-            const status = await userService.getDriverStatus(session!.user.id);
-            setVerificationStatus(status as any);
+            const details = await userService.getDriverVerificationDetails(session!.user.id);
+            setVerificationStatus(details.status as any);
+            setRejectionReason(details.rejectionReason);
         } catch (error) {
             console.error('Error fetching driver status:', error);
         }

@@ -22,7 +22,20 @@ import {
   Building,
   ShoppingBag,
   Gift,
-  Package
+  Package,
+  Truck,
+  CheckCircle2,
+  XCircle,
+  Eye,
+  Wallet,
+  Clock,
+  UserCheck,
+  FileText,
+  Users,
+  ZoomIn,
+  Car,
+  ChevronRight,
+  Info
 } from 'lucide-react';
 
 export interface CustomerLead {
@@ -65,10 +78,20 @@ interface UserProfile {
   phone_verified: boolean;
   created_at: string;
   drivers?: {
+    id?: string;
     verification_status: string;
+    rejection_reason?: string | null;
     platform_balance: number;
+    available_balance?: number;
     total_deliveries: number;
     average_rating: number;
+    national_id_number?: string | null;
+    license_number?: string | null;
+    emergency_contact_name?: string | null;
+    emergency_contact_phone?: string | null;
+    is_online?: boolean;
+    tier?: string;
+    working_radius_km?: number;
   } | null;
   courier_wallets?: {
     balance: number;
@@ -91,6 +114,31 @@ interface UserProfile {
     vehicle_type: string;
     coverage_area: string;
     screening_concerns: string[];
+  } | null;
+  driver_documents?: {
+    id: string;
+    driver_id: string;
+    document_type: string;
+    file_url: string;
+    uploaded_at?: string;
+    verified?: boolean;
+  }[];
+  vehicle?: {
+    id: string;
+    driver_id: string;
+    vehicle_type: string;
+    make: string;
+    model: string;
+    year?: number | null;
+    color?: string | null;
+    license_plate: string;
+    photo_front_url?: string | null;
+    photo_back_url?: string | null;
+    photo_left_url?: string | null;
+    photo_right_url?: string | null;
+    is_active?: boolean;
+    registration_number?: string | null;
+    insurance_expiry_date?: string | null;
   } | null;
 }
 
@@ -128,8 +176,26 @@ export const UserManagement = () => {
   const [newPhone, setNewPhone] = useState('');
   const [newRole, setNewRole] = useState<'customer' | 'driver' | 'admin'>('customer');
 
-  // Main Tab Navigation
-  const [activeMainTab, setActiveMainTab] = useState<'users' | 'leads' | 'applicants'>('users');
+  // Main Tab Navigation: Defaults to 'couriers' so pending drivers are immediately visible!
+  const [activeMainTab, setActiveMainTab] = useState<'couriers' | 'users' | 'leads' | 'applicants'>('couriers');
+
+  // Courier Filter & Management State
+  const [courierSearchTerm, setCourierSearchTerm] = useState('');
+  const [courierStatusFilter, setCourierStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'suspended'>('all');
+  const [courierVehicleFilter, setCourierVehicleFilter] = useState<string>('all');
+
+  // Courier Application Review Modal State
+  const [selectedCourier, setSelectedCourier] = useState<UserProfile | null>(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewActiveSubTab, setReviewActiveSubTab] = useState<'docs' | 'vehicle' | 'ai'>('docs');
+
+  // Courier Disapproval / Fix Request State
+  const [showDisapprovalModal, setShowDisapprovalModal] = useState(false);
+  const [disapprovalCourier, setDisapprovalCourier] = useState<UserProfile | null>(null);
+  const [disapprovalReason, setDisapprovalReason] = useState('');
+
+  // Lightbox Image Viewer State
+  const [lightboxImage, setLightboxImage] = useState<{ url: string; title: string } | null>(null);
 
   // Customer Leads (Parcel Waitlist) State
   const [customerLeads, setCustomerLeads] = useState<CustomerLead[]>([]);
@@ -251,7 +317,8 @@ export const UserManagement = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      // 1. Fetch users with drivers, customers, driver_applications (omitting courier_wallets to avoid PGRST200 foreign key issue)
+      const { data: usersData, error: usersError } = await supabase
         .from('users')
         .select(`
           id,
@@ -264,14 +331,19 @@ export const UserManagement = () => {
           phone_verified,
           created_at,
           drivers (
+            id,
             verification_status,
+            rejection_reason,
             platform_balance,
+            available_balance,
             total_deliveries,
-            average_rating
-          ),
-          courier_wallets (
-            balance,
-            status
+            average_rating,
+            national_id_number,
+            license_number,
+            emergency_contact_name,
+            emergency_contact_phone,
+            is_online,
+            tier
           ),
           customers (
             total_orders,
@@ -291,19 +363,61 @@ export const UserManagement = () => {
             coverage_area,
             screening_concerns
           )
-        `);
+        `)
+        .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      
-      const mapped = (data || []).map((u: any) => ({
-        ...u,
-        driver_applications: Array.isArray(u.driver_applications) 
-          ? u.driver_applications[0] 
-          : u.driver_applications,
-        courier_wallets: Array.isArray(u.courier_wallets)
-          ? u.courier_wallets[0]
-          : u.courier_wallets
-      }));
+      if (usersError) throw usersError;
+
+      // 2. Fetch courier_wallets, driver_documents, and vehicles in parallel
+      const [
+        { data: walletsData },
+        { data: docsData },
+        { data: vehiclesData }
+      ] = await Promise.all([
+        supabase.from('courier_wallets').select('courier_id, balance, status'),
+        supabase.from('driver_documents').select('*'),
+        supabase.from('vehicles').select('*')
+      ]);
+
+      const walletMap = new Map<string, any>();
+      (walletsData || []).forEach((w: any) => {
+        if (w.courier_id) walletMap.set(w.courier_id, w);
+      });
+
+      const docsMap = new Map<string, any[]>();
+      (docsData || []).forEach((d: any) => {
+        if (d.driver_id) {
+          const list = docsMap.get(d.driver_id) || [];
+          list.push(d);
+          docsMap.set(d.driver_id, list);
+        }
+      });
+
+      const vehicleMap = new Map<string, any>();
+      (vehiclesData || []).forEach((v: any) => {
+        if (v.driver_id && !vehicleMap.has(v.driver_id)) {
+          vehicleMap.set(v.driver_id, v);
+        }
+      });
+
+      const mapped = (usersData || []).map((u: any) => {
+        const driverObj = Array.isArray(u.drivers) ? u.drivers[0] : u.drivers;
+        const appObj = Array.isArray(u.driver_applications) ? u.driver_applications[0] : u.driver_applications;
+        const customerObj = Array.isArray(u.customers) ? u.customers[0] : u.customers;
+        const walletObj = walletMap.get(u.id) || null;
+        const userDocs = docsMap.get(u.id) || [];
+        const userVehicle = vehicleMap.get(u.id) || null;
+
+        return {
+          ...u,
+          drivers: driverObj || null,
+          driver_applications: appObj || null,
+          customers: customerObj || null,
+          courier_wallets: walletObj,
+          driver_documents: userDocs,
+          vehicle: userVehicle
+        };
+      });
 
       setUsers(mapped);
     } catch (err: any) {
@@ -311,6 +425,166 @@ export const UserManagement = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const DISAPPROVAL_PRESETS = [
+    { label: 'Blurry National ID', text: 'National ID photo is blurry or unreadable. Please upload clear, well-lit photos of both the front and back of your ID.' },
+    { label: 'Expired Driver License', text: "Your Driver's License has expired or is invalid. Please upload a valid and current Driver's License." },
+    { label: 'Missing ID Back Photo', text: 'The back side photo of your National ID is missing. Please upload both front and back.' },
+    { label: 'Missing License Back Photo', text: "The back side photo of your Driver's License is missing. Please upload both front and back." },
+    { label: 'Vehicle Plate Mismatch', text: 'The license plate visible in your vehicle photos does not match your registered vehicle license plate.' },
+    { label: 'Unclear Vehicle Photos', text: 'Vehicle photos are dark or incomplete. Please provide clear photos showing the full vehicle from the front, rear (with plate), and both sides.' },
+    { label: 'Name Mismatch', text: 'The name on your submitted identification documents does not match your registered ShipMate account name.' },
+  ];
+
+  const getCourierRejectionWhatsAppUrl = (phone: string, name: string, reason: string) => {
+    let clean = phone.replace(/[^0-9]/g, '');
+    if (clean.startsWith('0')) {
+      clean = '263' + clean.slice(1);
+    } else if (!clean.startsWith('263')) {
+      clean = '263' + clean;
+    }
+    const msg = encodeURIComponent(
+      `Hi ${name},\n\nThis is ShipMate Operations regarding your courier application.\n\n` +
+      `Our team reviewed your submitted documents, but we need you to address the following before your account can be approved:\n\n` +
+      `⚠️ Reason / Required Fix: ${reason}\n\n` +
+      `Please open your ShipMate Driver app to update your details or re-upload the required photos so we can activate your account promptly.\n\n` +
+      `Thank you,\nShipMate Fleet Team`
+    );
+    return `https://wa.me/${clean}?text=${msg}`;
+  };
+
+  const openReviewModal = (user: UserProfile) => {
+    setSelectedCourier(user);
+    setReviewActiveSubTab('docs');
+    setShowReviewModal(true);
+  };
+
+  const openDisapprovalModal = (user: UserProfile) => {
+    setDisapprovalCourier(user);
+    setDisapprovalReason(user.drivers?.rejection_reason || '');
+    setShowDisapprovalModal(true);
+  };
+
+  // Direct Courier Approval & Rejection Handlers
+  const handleApproveDriver = async (user: UserProfile) => {
+    try {
+      setLoading(true);
+      const { error: drvErr } = await supabase
+        .from('drivers')
+        .update({
+          verification_status: 'approved',
+          rejection_reason: null,
+          is_identity_verified: true,
+          last_verification_at: new Date().toISOString()
+        })
+        .eq('id', user.id);
+
+      if (drvErr) throw drvErr;
+
+      await supabase
+        .from('users')
+        .update({ account_status: 'active' })
+        .eq('id', user.id);
+
+      await supabase
+        .from('courier_wallets')
+        .update({ status: 'active' })
+        .eq('courier_id', user.id);
+
+      setUsers(prev => prev.map(u => {
+        if (u.id === user.id) {
+          return {
+            ...u,
+            account_status: 'active',
+            drivers: u.drivers 
+              ? { ...u.drivers, verification_status: 'approved', rejection_reason: null }
+              : { verification_status: 'approved', platform_balance: 0, total_deliveries: 0, average_rating: 5 },
+            courier_wallets: u.courier_wallets ? { ...u.courier_wallets, status: 'active' } : { balance: 0, status: 'active' }
+          };
+        }
+        return u;
+      }));
+
+      showToast(`🎉 Courier ${user.full_name || user.email} approved! Account activated.`);
+      if (selectedUser?.id === user.id) {
+        setSelectedUser(prev => prev ? {
+          ...prev,
+          account_status: 'active',
+          drivers: prev.drivers ? { ...prev.drivers, verification_status: 'approved', rejection_reason: null } : null
+        } : null);
+      }
+      if (selectedCourier?.id === user.id) {
+        setSelectedCourier(prev => prev ? {
+          ...prev,
+          account_status: 'active',
+          drivers: prev.drivers ? { ...prev.drivers, verification_status: 'approved', rejection_reason: null } : null
+        } : null);
+      }
+    } catch (err: any) {
+      alert(`Approval failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirmDisapproval = async () => {
+    if (!disapprovalCourier) return;
+    if (!disapprovalReason.trim()) {
+      alert('Please enter or select a reason explaining why the application was not approved.');
+      return;
+    }
+
+    const reason = disapprovalReason.trim();
+    try {
+      setLoading(true);
+      const { error: drvErr } = await supabase
+        .from('drivers')
+        .update({
+          verification_status: 'rejected',
+          rejection_reason: reason,
+          last_verification_at: new Date().toISOString()
+        })
+        .eq('id', disapprovalCourier.id);
+
+      if (drvErr) throw drvErr;
+
+      setUsers(prev => prev.map(u => {
+        if (u.id === disapprovalCourier.id) {
+          return {
+            ...u,
+            drivers: u.drivers 
+              ? { ...u.drivers, verification_status: 'rejected', rejection_reason: reason } 
+              : { verification_status: 'rejected', rejection_reason: reason, platform_balance: 0, total_deliveries: 0, average_rating: 0 }
+          };
+        }
+        return u;
+      }));
+
+      showToast(`Courier application marked as Disapproved with feedback message.`);
+      setShowDisapprovalModal(false);
+
+      if (selectedUser?.id === disapprovalCourier.id) {
+        setSelectedUser(prev => prev ? {
+          ...prev,
+          drivers: prev.drivers ? { ...prev.drivers, verification_status: 'rejected', rejection_reason: reason } : null
+        } : null);
+      }
+      if (selectedCourier?.id === disapprovalCourier.id) {
+        setSelectedCourier(prev => prev ? {
+          ...prev,
+          drivers: prev.drivers ? { ...prev.drivers, verification_status: 'rejected', rejection_reason: reason } : null
+        } : null);
+      }
+    } catch (err: any) {
+      alert(`Disapproval failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRejectDriver = async (user: UserProfile) => {
+    openDisapprovalModal(user);
   };
 
   const handleOpenLedgerModal = async (user: UserProfile) => {
@@ -526,6 +800,43 @@ export const UserManagement = () => {
     }
   };
 
+  // Filter logic for Couriers & Pending Approvals
+  const couriers = users.filter(u => u.role === 'driver' || Boolean(u.drivers) || Boolean(u.driver_applications));
+  const pendingCouriersCount = couriers.filter(c => c.drivers?.verification_status === 'pending' || !c.drivers?.verification_status || c.drivers?.verification_status === 'submitted').length;
+  const approvedCouriersCount = couriers.filter(c => c.drivers?.verification_status === 'approved').length;
+  const rejectedCouriersCount = couriers.filter(c => c.drivers?.verification_status === 'rejected').length;
+  const onlineCouriersCount = couriers.filter(c => c.drivers?.is_online).length;
+
+  const filteredCouriers = couriers.filter(c => {
+    const q = courierSearchTerm.toLowerCase();
+    const matchesSearch =
+      q === '' ||
+      (c.full_name || '').toLowerCase().includes(q) ||
+      (c.email || '').toLowerCase().includes(q) ||
+      (c.phone || '').toLowerCase().includes(q) ||
+      (c.drivers?.national_id_number || '').toLowerCase().includes(q) ||
+      (c.drivers?.license_number || '').toLowerCase().includes(q) ||
+      (c.drivers?.emergency_contact_name || '').toLowerCase().includes(q) ||
+      (c.vehicle?.license_plate || '').toLowerCase().includes(q) ||
+      (c.vehicle?.make || '').toLowerCase().includes(q) ||
+      (c.vehicle?.model || '').toLowerCase().includes(q);
+
+    const status = c.drivers?.verification_status || 'pending';
+    const matchesStatus =
+      courierStatusFilter === 'all' ||
+      (courierStatusFilter === 'pending' && (status === 'pending' || status === 'submitted')) ||
+      (courierStatusFilter === 'approved' && status === 'approved') ||
+      (courierStatusFilter === 'rejected' && status === 'rejected') ||
+      (courierStatusFilter === 'suspended' && status === 'suspended');
+
+    const vType = (c.vehicle?.vehicle_type || c.driver_applications?.vehicle_type || '').toLowerCase();
+    const matchesVehicle =
+      courierVehicleFilter === 'all' ||
+      vType === courierVehicleFilter.toLowerCase();
+
+    return matchesSearch && matchesStatus && matchesVehicle;
+  });
+
   // Filters logic for Users
   const filteredUsers = users.filter(user => {
     const matchesSearch = 
@@ -610,14 +921,32 @@ export const UserManagement = () => {
         {/* MAIN TAB SWITCHER */}
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 pb-4">
           <button
-            onClick={() => setActiveMainTab('users')}
-            className={`px-5 py-2.5 rounded-2xl font-bold text-sm transition-all cursor-pointer ${
-              activeMainTab === 'users'
-                ? 'bg-brand-blue text-white shadow-lg shadow-brand-blue/20'
+            onClick={() => setActiveMainTab('couriers')}
+            className={`px-5 py-2.5 rounded-2xl font-bold text-sm transition-all cursor-pointer flex items-center gap-2.5 ${
+              activeMainTab === 'couriers'
+                ? 'bg-brand-blue text-white shadow-lg shadow-brand-blue/25 ring-2 ring-brand-blue/40'
                 : 'bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-800'
             }`}
           >
-            Registered Users ({users.length})
+            <Truck className="w-4 h-4" />
+            <span>Couriers & Approvals ({couriers.length})</span>
+            {pendingCouriersCount > 0 && (
+              <span className="bg-amber-400 text-slate-950 font-black text-xs px-2.5 py-0.5 rounded-full animate-pulse shadow-sm">
+                {pendingCouriersCount} Awaiting Approval
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveMainTab('users')}
+            className={`px-5 py-2.5 rounded-2xl font-bold text-sm transition-all cursor-pointer flex items-center gap-2 ${
+              activeMainTab === 'users'
+                ? 'bg-slate-700 text-white shadow-lg'
+                : 'bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>All Registered Users ({users.length})</span>
           </button>
 
           <button
@@ -656,9 +985,321 @@ export const UserManagement = () => {
         </div>
 
         {/* ========================================================= */}
-        {/* TAB 1: REGISTERED USERS VIEW */}
+        {/* TAB 0: COURIERS & APPROVALS VIEW */}
         {/* ========================================================= */}
-        {activeMainTab === 'users' ? (
+        {activeMainTab === 'couriers' ? (
+          <>
+            {/* Quick KPI Cards for Fleet & Approvals */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-slate-800/40 border border-slate-850 p-4.5 rounded-3xl relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold text-amber-400 uppercase tracking-wider">Awaiting Review</p>
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
+                </div>
+                <p className="text-3xl font-black text-amber-400 mt-1">{pendingCouriersCount}</p>
+                <p className="text-[11px] text-slate-400 mt-1">Pending approval</p>
+              </div>
+
+              <div className="bg-slate-800/40 border border-slate-850 p-4.5 rounded-3xl">
+                <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Approved Fleet</p>
+                <p className="text-3xl font-black text-emerald-400 mt-1">{approvedCouriersCount}</p>
+                <p className="text-[11px] text-slate-400 mt-1">Active registered couriers</p>
+              </div>
+
+              <div className="bg-slate-800/40 border border-slate-850 p-4.5 rounded-3xl">
+                <p className="text-xs font-bold text-rose-400 uppercase tracking-wider">Fix Required / Rejected</p>
+                <p className="text-3xl font-black text-rose-400 mt-1">{rejectedCouriersCount}</p>
+                <p className="text-[11px] text-slate-400 mt-1">Disapproved with feedback</p>
+              </div>
+
+              <div className="bg-slate-800/40 border border-slate-850 p-4.5 rounded-3xl">
+                <p className="text-xs font-bold text-sky-400 uppercase tracking-wider">Online Now</p>
+                <p className="text-3xl font-black text-sky-400 mt-1">{onlineCouriersCount}</p>
+                <p className="text-[11px] text-slate-400 mt-1">Currently on duty</p>
+              </div>
+            </div>
+
+            {/* Courier Filter bar */}
+            <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-[2rem] flex flex-col md:flex-row items-center gap-4">
+              <div className="relative w-full md:flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Search couriers by name, email, phone, plate, ID number..."
+                  value={courierSearchTerm}
+                  onChange={(e) => setCourierSearchTerm(e.target.value)}
+                  className="w-full bg-slate-950/40 border border-slate-850 rounded-2xl py-3 pl-12 pr-4 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue transition-all text-sm font-semibold"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                {/* Status Filter */}
+                <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
+                  <Filter className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={courierStatusFilter}
+                    onChange={(e) => setCourierStatusFilter(e.target.value as any)}
+                    className="bg-transparent text-slate-300 text-sm font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all" className="bg-slate-900 text-white">All Statuses</option>
+                    <option value="pending" className="bg-slate-900 text-amber-400">⏳ Awaiting Approval ({pendingCouriersCount})</option>
+                    <option value="approved" className="bg-slate-900 text-emerald-400">✓ Approved ({approvedCouriersCount})</option>
+                    <option value="rejected" className="bg-slate-900 text-rose-400">✗ Fix Required ({rejectedCouriersCount})</option>
+                    <option value="suspended" className="bg-slate-900 text-slate-400">🔒 Suspended</option>
+                  </select>
+                </div>
+
+                {/* Vehicle Filter */}
+                <div className="flex items-center gap-2 bg-slate-950/30 border border-slate-850 px-3.5 py-2.5 rounded-2xl">
+                  <Car className="w-4 h-4 text-slate-400" />
+                  <select
+                    value={courierVehicleFilter}
+                    onChange={(e) => setCourierVehicleFilter(e.target.value)}
+                    className="bg-transparent text-slate-300 text-sm font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all" className="bg-slate-900 text-white">All Vehicles</option>
+                    <option value="motorcycle" className="bg-slate-900 text-slate-200">Motorcycle 🏍️</option>
+                    <option value="car" className="bg-slate-900 text-slate-200">Car 🚗</option>
+                    <option value="bakkie" className="bg-slate-900 text-slate-200">Bakkie 🛻</option>
+                    <option value="van" className="bg-slate-900 text-slate-200">Van 🚐</option>
+                    <option value="bicycle" className="bg-slate-900 text-slate-200">Bicycle 🚴</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={fetchUsers}
+                  className="p-3 bg-slate-850 border border-slate-800 rounded-2xl text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  title="Refresh Couriers"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Couriers & Approvals Table */}
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-20">
+                <Loader2 className="w-12 h-12 text-brand-blue animate-spin mb-4" />
+                <p className="text-slate-400 font-semibold">Loading courier fleet applications...</p>
+              </div>
+            ) : filteredCouriers.length === 0 ? (
+              <div className="bg-slate-850/20 border border-slate-850 rounded-[2.5rem] py-16 text-center text-slate-400 font-semibold">
+                No couriers matched the selected criteria.
+              </div>
+            ) : (
+              <div className="bg-slate-950/20 border border-slate-850 rounded-[2.5rem] overflow-hidden shadow-xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-850/50 border-b border-slate-850 text-xs font-bold uppercase tracking-wider text-slate-400">
+                        <th className="py-5 px-6">Courier Info</th>
+                        <th className="py-5 px-6">Vehicle & Specs</th>
+                        <th className="py-5 px-6">Submitted Docs</th>
+                        <th className="py-5 px-6">Application Status</th>
+                        <th className="py-5 px-6 text-right">Review & Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-850">
+                      {filteredCouriers.map((courier) => {
+                        const status = courier.drivers?.verification_status || 'pending';
+                        const isPending = status === 'pending' || status === 'submitted';
+                        const isApproved = status === 'approved';
+                        const isRejected = status === 'rejected';
+
+                        const idDocs = courier.driver_documents?.filter(d => d.document_type.startsWith('national_id')) || [];
+                        const licDocs = courier.driver_documents?.filter(d => d.document_type.startsWith('license')) || [];
+                        const vehPhotos = [
+                          courier.vehicle?.photo_front_url,
+                          courier.vehicle?.photo_back_url,
+                          courier.vehicle?.photo_left_url,
+                          courier.vehicle?.photo_right_url
+                        ].filter(Boolean);
+
+                        const vType = courier.vehicle?.vehicle_type || courier.driver_applications?.vehicle_type || 'unassigned';
+
+                        return (
+                          <tr key={courier.id} className="hover:bg-slate-850/15 transition-colors text-sm">
+                            {/* Courier Info */}
+                            <td className="py-5 px-6 space-y-1">
+                              <div className="flex items-center gap-2">
+                                <p className="font-extrabold text-white text-base">{courier.full_name || 'Unnamed Driver'}</p>
+                                {courier.drivers?.is_online && (
+                                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" title="Online on Duty" />
+                                )}
+                              </div>
+                              <div className="flex flex-col gap-0.5 text-xs text-slate-400">
+                                <span className="flex items-center gap-1.5 font-mono">
+                                  <Mail className="w-3.5 h-3.5 text-slate-500" />
+                                  {courier.email}
+                                </span>
+                                {courier.phone && (
+                                  <span className="flex items-center gap-1.5 font-mono">
+                                    <Phone className="w-3.5 h-3.5 text-slate-500" />
+                                    {courier.phone}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-500">
+                                Applied: {new Date(courier.created_at).toLocaleDateString()}
+                              </p>
+                            </td>
+
+                            {/* Vehicle & Specs */}
+                            <td className="py-5 px-6 space-y-1 text-xs">
+                              <div className="flex items-center gap-1.5">
+                                <span className="bg-slate-800 text-slate-300 font-bold px-2 py-0.5 rounded-md uppercase text-[10px] flex items-center gap-1">
+                                  {vType === 'motorcycle' && '🏍️ Motorcycle'}
+                                  {vType === 'car' && '🚗 Car'}
+                                  {vType === 'bakkie' && '🛻 Bakkie'}
+                                  {vType === 'van' && '🚐 Van'}
+                                  {vType === 'bicycle' && '🚴 Bicycle'}
+                                  {!['motorcycle', 'car', 'bakkie', 'van', 'bicycle'].includes(vType) && `🚘 ${vType}`}
+                                </span>
+                              </div>
+                              <p className="font-extrabold text-white text-sm">
+                                {courier.vehicle ? `${courier.vehicle.make || ''} ${courier.vehicle.model || ''}`.trim() || 'Vehicle Registered' : 'Pending Specs'}
+                              </p>
+                              {courier.vehicle?.license_plate && (
+                                <span className="inline-block bg-slate-900 border border-slate-800 text-amber-300 font-mono font-black text-xs px-2 py-0.5 rounded-md">
+                                  {courier.vehicle.license_plate}
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Submitted Docs & Badges */}
+                            <td className="py-5 px-6 space-y-1.5">
+                              <div className="flex flex-wrap gap-1.5 text-[11px]">
+                                <span className={`px-2 py-0.5 rounded-md font-bold flex items-center gap-1 border ${
+                                  idDocs.length >= 2 
+                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                    : idDocs.length === 1
+                                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                    : 'bg-slate-800 text-slate-500 border-slate-700'
+                                }`}>
+                                  <FileText className="w-3 h-3" />
+                                  ID ({idDocs.length}/2)
+                                </span>
+
+                                <span className={`px-2 py-0.5 rounded-md font-bold flex items-center gap-1 border ${
+                                  licDocs.length >= 2 
+                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                    : licDocs.length === 1
+                                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                    : 'bg-slate-800 text-slate-500 border-slate-700'
+                                }`}>
+                                  <Award className="w-3 h-3" />
+                                  License ({licDocs.length}/2)
+                                </span>
+
+                                <span className={`px-2 py-0.5 rounded-md font-bold flex items-center gap-1 border ${
+                                  vehPhotos.length >= 4 
+                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                    : vehPhotos.length > 0
+                                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                    : 'bg-slate-800 text-slate-500 border-slate-700'
+                                }`}>
+                                  <Car className="w-3 h-3" />
+                                  Photos ({vehPhotos.length}/4)
+                                </span>
+                              </div>
+
+                              {courier.driver_applications?.screening_verdict && (
+                                <div className="text-[10px] flex items-center gap-1 font-bold">
+                                  <span className="text-slate-500">AI Screen:</span>
+                                  <span className={`uppercase px-1.5 py-0.2 rounded ${
+                                    courier.driver_applications.screening_verdict === 'approve'
+                                      ? 'bg-emerald-500/20 text-emerald-400'
+                                      : courier.driver_applications.screening_verdict === 'reject'
+                                      ? 'bg-rose-500/20 text-rose-400'
+                                      : 'bg-amber-500/20 text-amber-400'
+                                  }`}>
+                                    {courier.driver_applications.screening_verdict.replace(/_/g, ' ')}
+                                  </span>
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Verification Status & Feedback preview */}
+                            <td className="py-5 px-6 space-y-1.5">
+                              <span className={`inline-flex items-center gap-1.5 text-xs font-black uppercase px-3 py-1 rounded-xl border ${
+                                isApproved
+                                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                                  : isRejected
+                                  ? 'bg-rose-500/15 border-rose-500/30 text-rose-400'
+                                  : 'bg-amber-500/15 border-amber-500/30 text-amber-400 animate-pulse'
+                              }`}>
+                                {isApproved && <CheckCircle2 className="w-3.5 h-3.5" />}
+                                {isRejected && <XCircle className="w-3.5 h-3.5" />}
+                                {isPending && <Clock className="w-3.5 h-3.5" />}
+                                <span>{isPending ? 'Pending Review' : isRejected ? 'Fix Required' : status}</span>
+                              </span>
+
+                              {courier.drivers?.rejection_reason && (
+                                <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-2 text-xs max-w-xs text-rose-300">
+                                  <p className="font-bold text-[10px] text-rose-400 uppercase">Reason for Disapproval:</p>
+                                  <p className="line-clamp-2 italic text-[11px] mt-0.5 font-medium">
+                                    "{courier.drivers.rejection_reason}"
+                                  </p>
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Review & Actions */}
+                            <td className="py-5 px-6 text-right space-y-2">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => openReviewModal(courier)}
+                                  className="px-4 py-2 bg-brand-blue hover:bg-brand-blue/90 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-brand-blue/20 cursor-pointer flex items-center gap-1.5"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>Review Application</span>
+                                </button>
+                              </div>
+
+                              <div className="flex items-center justify-end gap-2">
+                                {!isApproved && (
+                                  <button
+                                    onClick={() => handleApproveDriver(courier)}
+                                    className="p-2 bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/20 rounded-xl transition-all cursor-pointer"
+                                    title="Quick Approve"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+
+                                {!isRejected && (
+                                  <button
+                                    onClick={() => openDisapprovalModal(courier)}
+                                    className="p-2 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/20 rounded-xl transition-all cursor-pointer"
+                                    title="Disapprove / Request Fix"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+
+                                {courier.phone && (
+                                  <a
+                                    href={getWhatsAppUrl(courier.phone, courier.full_name || 'Driver', 'Zimbabwe')}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-2 bg-[#25D366]/10 hover:bg-[#25D366] text-[#25D366] hover:text-slate-950 border border-[#25D366]/20 rounded-xl transition-all cursor-pointer"
+                                    title="WhatsApp Driver"
+                                  >
+                                    <MessageSquare className="w-3.5 h-3.5" />
+                                  </a>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        ) : activeMainTab === 'users' ? (
           <>
             {/* Filter bar */}
             <div className="bg-slate-800/40 border border-slate-850 p-4 rounded-[2rem] flex flex-col md:flex-row items-center gap-4">
@@ -1285,6 +1926,925 @@ export const UserManagement = () => {
         )}
       </div>
 
+      {/* ========================================================= */}
+      {/* COURIER APPLICATION REVIEW MODAL */}
+      {/* ========================================================= */}
+      {showReviewModal && selectedCourier && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl relative max-h-[92vh] flex flex-col overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="p-6 sm:p-7 border-b border-slate-800 flex items-start justify-between shrink-0 bg-slate-900/60 backdrop-blur-sm">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-brand-blue/15 text-brand-blue border border-brand-blue/30 flex items-center justify-center shrink-0 mt-0.5">
+                  <Truck className="w-6 h-6" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-2xl font-black text-white">{selectedCourier.full_name || 'Unnamed Driver'}</h2>
+                    <span className={`text-xs font-black uppercase px-2.5 py-0.5 rounded-lg border ${
+                      selectedCourier.drivers?.verification_status === 'approved'
+                        ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                        : selectedCourier.drivers?.verification_status === 'rejected'
+                        ? 'bg-rose-500/15 border-rose-500/30 text-rose-400'
+                        : 'bg-amber-500/15 border-amber-500/30 text-amber-400 animate-pulse'
+                    }`}>
+                      {selectedCourier.drivers?.verification_status || 'PENDING APPROVAL'}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
+                    <span className="flex items-center gap-1 font-mono text-slate-300">
+                      <Mail className="w-3.5 h-3.5 text-slate-500" />
+                      {selectedCourier.email}
+                    </span>
+                    {selectedCourier.phone && (
+                      <span className="flex items-center gap-1 font-mono text-slate-300">
+                        <Phone className="w-3.5 h-3.5 text-slate-500" />
+                        {selectedCourier.phone}
+                      </span>
+                    )}
+                    <span className="text-slate-500">
+                      Joined: {new Date(selectedCourier.created_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {selectedCourier.phone && (
+                  <a
+                    href={getWhatsAppUrl(selectedCourier.phone, selectedCourier.full_name || 'Driver', 'Zimbabwe')}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-2 bg-[#25D366]/10 hover:bg-[#25D366]/20 border border-[#25D366]/30 text-[#25D366] text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">WhatsApp</span>
+                  </a>
+                )}
+                <button
+                  onClick={() => setShowReviewModal(false)}
+                  className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-750 border border-slate-700 rounded-xl transition-colors cursor-pointer"
+                  title="Close Modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Current Rejection Feedback Banner (if rejected previously) */}
+            {selectedCourier.drivers?.rejection_reason && (
+              <div className="bg-rose-500/10 border-b border-rose-500/20 px-7 py-3 flex items-center justify-between text-xs shrink-0">
+                <div className="flex items-center gap-2 text-rose-300">
+                  <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>
+                    <strong className="text-rose-400 uppercase font-black mr-1">Current Disapproval Reason:</strong> 
+                    "{selectedCourier.drivers.rejection_reason}"
+                  </span>
+                </div>
+                <button
+                  onClick={() => openDisapprovalModal(selectedCourier)}
+                  className="text-xs font-bold text-rose-400 hover:text-rose-300 underline cursor-pointer shrink-0 ml-4"
+                >
+                  Edit Feedback
+                </button>
+              </div>
+            )}
+
+            {/* Sub-tab Navigation */}
+            <div className="flex items-center gap-3 px-7 pt-4 border-b border-slate-800/80 bg-slate-900/40 shrink-0">
+              <button
+                onClick={() => setReviewActiveSubTab('docs')}
+                className={`pb-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+                  reviewActiveSubTab === 'docs'
+                    ? 'border-brand-blue text-brand-blue font-extrabold'
+                    : 'border-transparent text-slate-400 hover:text-white'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                <span>Identification & Documents</span>
+                <span className="bg-slate-800 px-2 py-0.5 rounded-full text-[10px] text-slate-300">
+                  {(selectedCourier.driver_documents || []).length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setReviewActiveSubTab('vehicle')}
+                className={`pb-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+                  reviewActiveSubTab === 'vehicle'
+                    ? 'border-brand-blue text-brand-blue font-extrabold'
+                    : 'border-transparent text-slate-400 hover:text-white'
+                }`}
+              >
+                <Car className="w-4 h-4" />
+                <span>Vehicle Inspection & Photos</span>
+                {selectedCourier.vehicle && (
+                  <span className="bg-slate-800 px-2 py-0.5 rounded-full text-[10px] text-slate-300">
+                    {selectedCourier.vehicle.license_plate || 'Specs'}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setReviewActiveSubTab('ai')}
+                className={`pb-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+                  reviewActiveSubTab === 'ai'
+                    ? 'border-brand-blue text-brand-blue font-extrabold'
+                    : 'border-transparent text-slate-400 hover:text-white'
+                }`}
+              >
+                <Cpu className="w-4 h-4" />
+                <span>AI Screening & OCR Data</span>
+                {selectedCourier.driver_applications?.screening_verdict && (
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                    selectedCourier.driver_applications.screening_verdict === 'approve'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'bg-amber-500/20 text-amber-400'
+                  }`}>
+                    {selectedCourier.driver_applications.screening_verdict.replace(/_/g, ' ')}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Scrollable Sub-tab Content Area */}
+            <div className="p-6 sm:p-7 overflow-y-auto flex-1 space-y-6">
+              {reviewActiveSubTab === 'docs' && (
+                <div className="space-y-7">
+                  {/* Summary row */}
+                  <div className="bg-slate-850/40 border border-slate-800 p-4.5 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">National ID Number</span>
+                      <span className="text-white font-mono font-bold text-sm mt-0.5 block">
+                        {selectedCourier.drivers?.national_id_number || selectedCourier.driver_applications?.id_extracted_data?.id_number || 'Pending Entry'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">License Number</span>
+                      <span className="text-white font-mono font-bold text-sm mt-0.5 block">
+                        {selectedCourier.drivers?.license_number || selectedCourier.driver_applications?.license_extracted_data?.id_number || 'Pending Entry'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Emergency Contact</span>
+                      <span className="text-slate-200 font-bold mt-0.5 block">
+                        {selectedCourier.drivers?.emergency_contact_name || 'None specified'}
+                      </span>
+                      {selectedCourier.drivers?.emergency_contact_phone && (
+                        <span className="text-slate-400 text-[11px] font-mono">
+                          {selectedCourier.drivers.emergency_contact_phone}
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Account Wallet Balance</span>
+                      <span className="text-emerald-400 font-black text-sm mt-0.5 block">
+                        ${selectedCourier.courier_wallets?.balance !== undefined ? selectedCourier.courier_wallets.balance.toFixed(2) : '0.00'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Section 1: National ID Photos */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-black uppercase tracking-wider text-white flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-brand-blue" />
+                        <span>Zimbabwe National ID Card</span>
+                      </h3>
+                      <span className="text-xs text-slate-400">Front & back photos required</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* ID Front */}
+                      {(() => {
+                        const idFront = selectedCourier.driver_documents?.find(d => d.document_type === 'national_id_front');
+                        const url = idFront?.file_url;
+                        return (
+                          <div className="bg-slate-950/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col justify-between">
+                            <div className="flex items-center justify-between mb-3">
+                              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-brand-blue" />
+                                National ID (Front)
+                              </span>
+                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                                url ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-500'
+                              }`}>
+                                {url ? 'Uploaded' : 'Missing'}
+                              </span>
+                            </div>
+
+                            {url ? (
+                              <div className="relative group rounded-xl overflow-hidden bg-slate-900 border border-slate-800 h-56 flex items-center justify-center">
+                                <img
+                                  src={url}
+                                  alt="National ID Front"
+                                  className="w-full h-full object-contain cursor-pointer transition-transform group-hover:scale-105"
+                                  onClick={() => setLightboxImage({ url, title: `${selectedCourier.full_name} - National ID (Front)` })}
+                                />
+                                <div className="absolute inset-0 bg-slate-950/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                                  <button
+                                    onClick={() => setLightboxImage({ url, title: `${selectedCourier.full_name} - National ID (Front)` })}
+                                    className="px-3.5 py-2 bg-brand-blue hover:bg-brand-blue/90 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg cursor-pointer"
+                                  >
+                                    <ZoomIn className="w-4 h-4" />
+                                    <span>Inspect</span>
+                                  </button>
+                                  <a
+                                    href={url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold shadow-lg cursor-pointer"
+                                    title="Open Full Resolution"
+                                  >
+                                    <ExternalLink className="w-4 h-4" />
+                                  </a>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="h-56 rounded-xl border border-dashed border-slate-800 flex flex-col items-center justify-center text-slate-500 gap-2 bg-slate-900/20">
+                                <FileText className="w-8 h-8 opacity-40" />
+                                <span className="text-xs font-semibold">Front ID not submitted</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* ID Back */}
+                      {(() => {
+                        const idBack = selectedCourier.driver_documents?.find(d => d.document_type === 'national_id_back');
+                        const url = idBack?.file_url;
+                        return (
+                          <div className="bg-slate-950/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col justify-between">
+                            <div className="flex items-center justify-between mb-3">
+                              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-brand-blue" />
+                                National ID (Back)
+                              </span>
+                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                                url ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-500'
+                              }`}>
+                                {url ? 'Uploaded' : 'Missing'}
+                              </span>
+                            </div>
+
+                            {url ? (
+                              <div className="relative group rounded-xl overflow-hidden bg-slate-900 border border-slate-800 h-56 flex items-center justify-center">
+                                <img
+                                  src={url}
+                                  alt="National ID Back"
+                                  className="w-full h-full object-contain cursor-pointer transition-transform group-hover:scale-105"
+                                  onClick={() => setLightboxImage({ url, title: `${selectedCourier.full_name} - National ID (Back)` })}
+                                />
+                                <div className="absolute inset-0 bg-slate-950/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                                  <button
+                                    onClick={() => setLightboxImage({ url, title: `${selectedCourier.full_name} - National ID (Back)` })}
+                                    className="px-3.5 py-2 bg-brand-blue hover:bg-brand-blue/90 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg cursor-pointer"
+                                  >
+                                    <ZoomIn className="w-4 h-4" />
+                                    <span>Inspect</span>
+                                  </button>
+                                  <a
+                                    href={url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold shadow-lg cursor-pointer"
+                                    title="Open Full Resolution"
+                                  >
+                                    <ExternalLink className="w-4 h-4" />
+                                  </a>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="h-56 rounded-xl border border-dashed border-slate-800 flex flex-col items-center justify-center text-slate-500 gap-2 bg-slate-900/20">
+                                <FileText className="w-8 h-8 opacity-40" />
+                                <span className="text-xs font-semibold">Back ID not submitted</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Section 2: Driver's License Photos */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-black uppercase tracking-wider text-white flex items-center gap-2">
+                        <Award className="w-4 h-4 text-emerald-400" />
+                        <span>Driver's License Documentation</span>
+                      </h3>
+                      <span className="text-xs text-slate-400">Valid Zimbabwean driver's license</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* License Front */}
+                      {(() => {
+                        const licFront = selectedCourier.driver_documents?.find(d => d.document_type === 'license_front');
+                        const url = licFront?.file_url;
+                        return (
+                          <div className="bg-slate-950/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col justify-between">
+                            <div className="flex items-center justify-between mb-3">
+                              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                                Driver's License (Front)
+                              </span>
+                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                                url ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-500'
+                              }`}>
+                                {url ? 'Uploaded' : 'Missing'}
+                              </span>
+                            </div>
+
+                            {url ? (
+                              <div className="relative group rounded-xl overflow-hidden bg-slate-900 border border-slate-800 h-56 flex items-center justify-center">
+                                <img
+                                  src={url}
+                                  alt="License Front"
+                                  className="w-full h-full object-contain cursor-pointer transition-transform group-hover:scale-105"
+                                  onClick={() => setLightboxImage({ url, title: `${selectedCourier.full_name} - Driver's License (Front)` })}
+                                />
+                                <div className="absolute inset-0 bg-slate-950/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                                  <button
+                                    onClick={() => setLightboxImage({ url, title: `${selectedCourier.full_name} - Driver's License (Front)` })}
+                                    className="px-3.5 py-2 bg-brand-blue hover:bg-brand-blue/90 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg cursor-pointer"
+                                  >
+                                    <ZoomIn className="w-4 h-4" />
+                                    <span>Inspect</span>
+                                  </button>
+                                  <a
+                                    href={url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold shadow-lg cursor-pointer"
+                                    title="Open Full Resolution"
+                                  >
+                                    <ExternalLink className="w-4 h-4" />
+                                  </a>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="h-56 rounded-xl border border-dashed border-slate-800 flex flex-col items-center justify-center text-slate-500 gap-2 bg-slate-900/20">
+                                <Award className="w-8 h-8 opacity-40" />
+                                <span className="text-xs font-semibold">License Front not submitted</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* License Back */}
+                      {(() => {
+                        const licBack = selectedCourier.driver_documents?.find(d => d.document_type === 'license_back');
+                        const url = licBack?.file_url;
+                        return (
+                          <div className="bg-slate-950/40 border border-slate-800/80 rounded-2xl p-4 flex flex-col justify-between">
+                            <div className="flex items-center justify-between mb-3">
+                              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                                Driver's License (Back)
+                              </span>
+                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                                url ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-500'
+                              }`}>
+                                {url ? 'Uploaded' : 'Missing'}
+                              </span>
+                            </div>
+
+                            {url ? (
+                              <div className="relative group rounded-xl overflow-hidden bg-slate-900 border border-slate-800 h-56 flex items-center justify-center">
+                                <img
+                                  src={url}
+                                  alt="License Back"
+                                  className="w-full h-full object-contain cursor-pointer transition-transform group-hover:scale-105"
+                                  onClick={() => setLightboxImage({ url, title: `${selectedCourier.full_name} - Driver's License (Back)` })}
+                                />
+                                <div className="absolute inset-0 bg-slate-950/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                                  <button
+                                    onClick={() => setLightboxImage({ url, title: `${selectedCourier.full_name} - Driver's License (Back)` })}
+                                    className="px-3.5 py-2 bg-brand-blue hover:bg-brand-blue/90 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg cursor-pointer"
+                                  >
+                                    <ZoomIn className="w-4 h-4" />
+                                    <span>Inspect</span>
+                                  </button>
+                                  <a
+                                    href={url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold shadow-lg cursor-pointer"
+                                    title="Open Full Resolution"
+                                  >
+                                    <ExternalLink className="w-4 h-4" />
+                                  </a>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="h-56 rounded-xl border border-dashed border-slate-800 flex flex-col items-center justify-center text-slate-500 gap-2 bg-slate-900/20">
+                                <Award className="w-8 h-8 opacity-40" />
+                                <span className="text-xs font-semibold">License Back not submitted</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-tab 2: Vehicle Inspection & Photos */}
+              {reviewActiveSubTab === 'vehicle' && (
+                <div className="space-y-6">
+                  {/* Vehicle Specs Header Card */}
+                  <div className="bg-slate-850/40 border border-slate-800 p-5 rounded-2xl">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4 border-b border-slate-800 pb-3">
+                      <div>
+                        <span className="text-slate-400 text-xs font-bold uppercase tracking-wider block">Registered Vehicle</span>
+                        <h4 className="text-lg font-black text-white mt-0.5">
+                          {selectedCourier.vehicle ? `${selectedCourier.vehicle.make || ''} ${selectedCourier.vehicle.model || ''}`.trim() : 'No Vehicle Profile'}
+                        </h4>
+                      </div>
+                      {selectedCourier.vehicle?.license_plate && (
+                        <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl text-center">
+                          <span className="text-[10px] text-slate-500 font-bold uppercase block">Plate Number</span>
+                          <span className="font-mono text-base font-black text-amber-400 tracking-wider">
+                            {selectedCourier.vehicle.license_plate}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                      <div>
+                        <span className="text-slate-500 block text-[10px] uppercase font-bold">Vehicle Type</span>
+                        <span className="text-white font-bold capitalize mt-0.5 block">
+                          {selectedCourier.vehicle?.vehicle_type || selectedCourier.driver_applications?.vehicle_type || 'Unspecified'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[10px] uppercase font-bold">Year / Model</span>
+                        <span className="text-white font-bold mt-0.5 block">
+                          {selectedCourier.vehicle?.year || 'N/A'} {selectedCourier.vehicle?.model || ''}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[10px] uppercase font-bold">Color</span>
+                        <span className="text-white font-bold capitalize mt-0.5 block">
+                          {selectedCourier.vehicle?.color || 'Standard'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[10px] uppercase font-bold">Active Status</span>
+                        <span className="text-emerald-400 font-bold mt-0.5 block">
+                          {selectedCourier.vehicle?.is_active ? 'Active on Fleet' : 'Pending Verification'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4-angle Vehicle Photos Gallery */}
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                      <Car className="w-4 h-4 text-brand-blue" />
+                      <span>Physical Vehicle Photos (4 Angles)</span>
+                    </h4>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {[
+                        { label: 'Front View (with Plate)', url: selectedCourier.vehicle?.photo_front_url },
+                        { label: 'Rear View (with Plate)', url: selectedCourier.vehicle?.photo_back_url },
+                        { label: 'Left Side View', url: selectedCourier.vehicle?.photo_left_url },
+                        { label: 'Right Side View', url: selectedCourier.vehicle?.photo_right_url },
+                      ].map((item, idx) => (
+                        <div key={idx} className="bg-slate-950/40 border border-slate-800/80 rounded-2xl p-3.5 flex flex-col justify-between">
+                          <span className="text-xs font-bold text-slate-200 mb-2.5 block truncate">
+                            {item.label}
+                          </span>
+
+                          {item.url ? (
+                            <div className="relative group rounded-xl overflow-hidden bg-slate-900 border border-slate-800 h-44 flex items-center justify-center">
+                              <img
+                                src={item.url}
+                                alt={item.label}
+                                className="w-full h-full object-cover cursor-pointer transition-transform group-hover:scale-105"
+                                onClick={() => setLightboxImage({ url: item.url!, title: `${selectedCourier.full_name} - ${item.label}` })}
+                              />
+                              <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => setLightboxImage({ url: item.url!, title: `${selectedCourier.full_name} - ${item.label}` })}
+                                  className="p-2 bg-brand-blue hover:bg-brand-blue/90 text-white rounded-lg text-xs font-bold cursor-pointer"
+                                  title="Enlarge Photo"
+                                >
+                                  <ZoomIn className="w-4 h-4" />
+                                </button>
+                                <a
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                                  title="Open in new tab"
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                </a>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="h-44 rounded-xl border border-dashed border-slate-800 flex flex-col items-center justify-center text-slate-500 gap-1.5 bg-slate-900/20">
+                              <Car className="w-6 h-6 opacity-40" />
+                              <span className="text-[11px] font-semibold">Not uploaded</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-tab 3: AI Screening & OCR Data */}
+              {reviewActiveSubTab === 'ai' && (
+                <div className="space-y-6">
+                  {/* Top Badges */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-slate-950/40 border border-slate-850 p-4.5 rounded-2xl">
+                      <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">National ID AI Status</span>
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-xs font-bold text-white">OCR Check</span>
+                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                          selectedCourier.driver_applications?.id_verification_status === 'verified'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : selectedCourier.driver_applications?.id_verification_status === 'flagged'
+                            ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {selectedCourier.driver_applications?.id_verification_status || 'Pending'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-950/40 border border-slate-850 p-4.5 rounded-2xl">
+                      <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">License AI Status</span>
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-xs font-bold text-white">OCR Check</span>
+                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                          selectedCourier.driver_applications?.license_verification_status === 'verified'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : selectedCourier.driver_applications?.license_verification_status === 'flagged'
+                            ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {selectedCourier.driver_applications?.license_verification_status || 'Pending'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-950/40 border border-slate-850 p-4.5 rounded-2xl">
+                      <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Pre-Screening Recommendation</span>
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-xs font-bold text-white">AI Verdict</span>
+                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
+                          selectedCourier.driver_applications?.screening_verdict === 'approve'
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : selectedCourier.driver_applications?.screening_verdict === 'reject'
+                            ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                        }`}>
+                          {selectedCourier.driver_applications?.screening_verdict?.replace(/_/g, ' ') || 'Pending'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* AI Flags */}
+                  {selectedCourier.driver_applications?.verification_flags && selectedCourier.driver_applications.verification_flags.length > 0 && (
+                    <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl flex items-start gap-3">
+                      <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-xs font-black text-amber-400 uppercase tracking-wider">AI Flags & Document Alerts</h4>
+                        <ul className="list-disc pl-4 text-xs text-slate-300 space-y-1 mt-1 font-medium">
+                          {selectedCourier.driver_applications.verification_flags.map((flag: string, i: number) => (
+                            <li key={i}>{flag}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Extracted Comparison */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* Extracted ID */}
+                    <div className="bg-slate-850/30 border border-slate-800 p-4.5 rounded-2xl space-y-3">
+                      <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-brand-blue" />
+                        National ID OCR Data
+                      </h4>
+                      {selectedCourier.driver_applications?.id_extracted_data ? (
+                        <div className="grid grid-cols-2 gap-2.5 text-xs">
+                          <div>
+                            <span className="text-slate-500 text-[10px] uppercase font-bold block">Name on ID</span>
+                            <span className="text-slate-200 font-semibold">{selectedCourier.driver_applications.id_extracted_data.full_name || 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 text-[10px] uppercase font-bold block">ID Number</span>
+                            <span className="text-slate-200 font-mono font-semibold">{selectedCourier.driver_applications.id_extracted_data.id_number || 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 text-[10px] uppercase font-bold block">Date of Birth</span>
+                            <span className="text-slate-200 font-semibold">{selectedCourier.driver_applications.id_extracted_data.date_of_birth || 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 text-[10px] uppercase font-bold block">Confidence</span>
+                            <span className="text-slate-200 font-semibold capitalize">{selectedCourier.driver_applications.id_extracted_data.confidence || 'N/A'}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 italic">No ID OCR data extracted.</p>
+                      )}
+                    </div>
+
+                    {/* Extracted License */}
+                    <div className="bg-slate-850/30 border border-slate-800 p-4.5 rounded-2xl space-y-3">
+                      <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        Driver's License OCR Data
+                      </h4>
+                      {selectedCourier.driver_applications?.license_extracted_data ? (
+                        <div className="grid grid-cols-2 gap-2.5 text-xs">
+                          <div>
+                            <span className="text-slate-500 text-[10px] uppercase font-bold block">Name on License</span>
+                            <span className="text-slate-200 font-semibold">{selectedCourier.driver_applications.license_extracted_data.full_name || 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 text-[10px] uppercase font-bold block">License Number</span>
+                            <span className="text-slate-200 font-mono font-semibold">{selectedCourier.driver_applications.license_extracted_data.id_number || 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 text-[10px] uppercase font-bold block">Expiry Date</span>
+                            <span className="text-slate-200 font-semibold">{selectedCourier.driver_applications.license_extracted_data.expiry_date || 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 text-[10px] uppercase font-bold block">Confidence</span>
+                            <span className="text-slate-200 font-semibold capitalize">{selectedCourier.driver_applications.license_extracted_data.confidence || 'N/A'}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 italic">No license OCR data extracted.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* AI Reasoning */}
+                  {selectedCourier.driver_applications?.screening_reasoning && (
+                    <div className="bg-slate-850/30 border border-slate-800 p-4.5 rounded-2xl space-y-1.5">
+                      <h4 className="text-xs font-black text-white uppercase tracking-wider">AI Evaluation Reasoning</h4>
+                      <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/40 p-3.5 rounded-xl border border-slate-800">
+                        {selectedCourier.driver_applications.screening_reasoning}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Screening Transcript */}
+                  {selectedCourier.driver_applications?.screening_transcript && selectedCourier.driver_applications.screening_transcript.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-black text-white uppercase tracking-wider">Applicant Pre-Screening Chat</h4>
+                      <div className="bg-slate-950/40 border border-slate-850 rounded-2xl p-4 max-h-52 overflow-y-auto space-y-3 text-xs">
+                        {selectedCourier.driver_applications.screening_transcript.map((msg: any, i: number) => {
+                          const isUser = msg.role === 'user';
+                          return (
+                            <div key={i} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+                              <div className={`max-w-[80%] p-3 rounded-2xl font-medium leading-relaxed ${
+                                isUser 
+                                  ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/30 rounded-tr-none' 
+                                  : 'bg-slate-850 border border-slate-800 text-slate-200 rounded-tl-none'
+                              }`}>
+                                <p>{msg.content}</p>
+                              </div>
+                              <span className="text-[9px] text-slate-500 font-bold uppercase mt-1 px-2">
+                                {isUser ? selectedCourier.full_name || 'Applicant' : 'Shipmate AI'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Bottom Decision Actions Bar */}
+            <div className="p-6 border-t border-slate-800 bg-slate-900/90 backdrop-blur-sm flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
+              <div className="flex items-center gap-3 text-xs w-full sm:w-auto">
+                <span className="text-slate-400 font-semibold">Current State:</span>
+                <span className={`font-black uppercase px-2.5 py-1 rounded-lg border ${
+                  selectedCourier.drivers?.verification_status === 'approved'
+                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                    : selectedCourier.drivers?.verification_status === 'rejected'
+                    ? 'bg-rose-500/15 border-rose-500/30 text-rose-400'
+                    : 'bg-amber-500/15 border-amber-500/30 text-amber-400'
+                }`}>
+                  {selectedCourier.drivers?.verification_status || 'PENDING APPROVAL'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                <button
+                  onClick={() => setShowReviewModal(false)}
+                  className="px-5 py-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                >
+                  Close
+                </button>
+
+                {/* Disapprove Button */}
+                <button
+                  onClick={() => openDisapprovalModal(selectedCourier)}
+                  className="px-5 py-2.5 bg-rose-500/15 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-2"
+                >
+                  <XCircle className="w-4 h-4" />
+                  <span>Disapprove / Request Fix</span>
+                </button>
+
+                {/* Approve Button */}
+                {selectedCourier.drivers?.verification_status !== 'approved' && (
+                  <button
+                    onClick={() => handleApproveDriver(selectedCourier)}
+                    className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl transition-all shadow-lg shadow-emerald-500/25 cursor-pointer flex items-center gap-2"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Approve Courier Application</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* DISAPPROVAL & FEEDBACK MODAL */}
+      {/* ========================================================= */}
+      {showDisapprovalModal && disapprovalCourier && (
+        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-55 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-[2.5rem] shadow-2xl relative space-y-6">
+            
+            <button
+              onClick={() => setShowDisapprovalModal(false)}
+              className="absolute top-6 right-6 p-2 text-slate-500 hover:text-white bg-slate-800 rounded-xl transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Header */}
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 bg-rose-500/15 text-rose-400 border border-rose-500/30 rounded-2xl flex items-center justify-center shrink-0">
+                <XCircle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-white">Disapprove Application</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Courier: <strong className="text-slate-200">{disapprovalCourier.full_name || disapprovalCourier.email}</strong>
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-950/40 border border-slate-850 p-4 rounded-2xl text-xs text-slate-300 leading-relaxed">
+              <p className="font-semibold text-slate-200 mb-1 flex items-center gap-1.5">
+                <Info className="w-3.5 h-3.5 text-brand-blue" />
+                How this works:
+              </p>
+              This comment will be displayed directly in the courier's ShipMate Driver mobile app with instructions on what documents or information to fix and resubmit.
+            </div>
+
+            {/* Quick Presets */}
+            <div className="space-y-2">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                Quick-Select Reason Presets:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {DISAPPROVAL_PRESETS.map((preset, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      if (!disapprovalReason.trim()) {
+                        setDisapprovalReason(preset.text);
+                      } else {
+                        setDisapprovalReason(prev => `${prev}\n• ${preset.text}`);
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-slate-850 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-750 text-[11px] font-semibold rounded-lg transition-all cursor-pointer"
+                  >
+                    + {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Reason Text Area */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                <span>Detailed Instructions for Driver:</span>
+                <span className="text-[11px] text-slate-500 font-normal">
+                  {disapprovalReason.length} characters
+                </span>
+              </label>
+              <textarea
+                rows={4}
+                value={disapprovalReason}
+                onChange={(e) => setDisapprovalReason(e.target.value)}
+                placeholder="Explain clearly what needs to be fixed (e.g. National ID photo is blurry, please take a well-lit photo of the front and back)..."
+                className="w-full bg-slate-950/60 border border-slate-800 rounded-2xl p-4 text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-rose-500/40 focus:border-rose-500 leading-relaxed placeholder:text-slate-600"
+              />
+            </div>
+
+            {/* Direct WhatsApp Action if phone available */}
+            {disapprovalCourier.phone && disapprovalReason.trim() && (
+              <div className="p-3 bg-[#25D366]/10 border border-[#25D366]/20 rounded-2xl flex items-center justify-between text-xs">
+                <span className="text-[#25D366] font-semibold flex items-center gap-1.5">
+                  <MessageSquare className="w-4 h-4" />
+                  Also notify driver directly via WhatsApp
+                </span>
+                <a
+                  href={getCourierRejectionWhatsAppUrl(disapprovalCourier.phone, disapprovalCourier.full_name || 'Driver', disapprovalReason)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 bg-[#25D366] hover:bg-[#25D366]/90 text-slate-950 font-black rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Send on WhatsApp
+                </a>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDisapprovalModal(false)}
+                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDisapproval}
+                className="px-6 py-2.5 bg-rose-500 hover:bg-rose-400 text-white font-black text-xs rounded-xl transition-all shadow-lg shadow-rose-500/25 cursor-pointer flex items-center gap-2"
+              >
+                <XCircle className="w-4 h-4" />
+                <span>Submit Disapproval & Send Comment</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* IMAGE LIGHTBOX MODAL */}
+      {/* ========================================================= */}
+      {lightboxImage && (
+        <div 
+          className="fixed inset-0 bg-slate-950/95 backdrop-blur-md z-60 flex flex-col items-center justify-center p-4 sm:p-8 animate-in fade-in duration-150"
+          onClick={() => setLightboxImage(null)}
+        >
+          <div 
+            className="relative max-w-5xl w-full max-h-[90vh] flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Top Toolbar */}
+            <div className="w-full flex items-center justify-between p-3 bg-slate-900/80 rounded-2xl border border-slate-800 mb-3 text-xs">
+              <span className="font-bold text-white px-2 truncate">{lightboxImage.title}</span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={lightboxImage.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Open Full Size</span>
+                </a>
+                <button
+                  onClick={() => setLightboxImage(null)}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* High-res Image */}
+            <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden p-2 flex items-center justify-center max-h-[78vh]">
+              <img
+                src={lightboxImage.url}
+                alt={lightboxImage.title}
+                className="max-h-[75vh] max-w-full object-contain rounded-xl shadow-2xl"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* AI SCREENING DETAILS MODAL */}
       {showDetailsModal && selectedUser && selectedUser.driver_applications && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -1313,6 +2873,42 @@ export const UserManagement = () => {
 
             {/* Scrollable Content */}
             <div className="overflow-y-auto flex-1 space-y-6 pr-2">
+              {/* Courier Profile & Contact Snapshot */}
+              <div className="bg-slate-850/40 border border-slate-800 p-5 rounded-2xl space-y-3">
+                <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                  <UserCheck className="w-4 h-4 text-emerald-400" />
+                  Courier Profile Record
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">National ID Number</span>
+                    <span className="text-white font-mono font-bold text-sm mt-1 block">
+                      {selectedUser.drivers?.national_id_number || selectedUser.driver_applications?.id_extracted_data?.id_number || 'Pending'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">License Number</span>
+                    <span className="text-white font-mono font-bold text-sm mt-1 block">
+                      {selectedUser.drivers?.license_number || selectedUser.driver_applications?.license_extracted_data?.id_number || 'None'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Emergency Contact</span>
+                    <span className="text-slate-200 font-bold mt-1 block">
+                      {selectedUser.drivers?.emergency_contact_name || 'None'}
+                    </span>
+                    <span className="text-slate-400 text-[11px] block">
+                      {selectedUser.drivers?.emergency_contact_phone || ''}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Wallet Float</span>
+                    <span className="text-emerald-400 font-black text-sm mt-1 block">
+                      ${selectedUser.courier_wallets?.balance !== undefined ? selectedUser.courier_wallets.balance.toFixed(2) : '0.00'}
+                    </span>
+                  </div>
+                </div>
+              </div>
               
               {/* Top Summary Badges */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1323,13 +2919,13 @@ export const UserManagement = () => {
                   <div className="flex items-center justify-between mt-2.5">
                     <span className="text-xs font-bold text-white">Status</span>
                     <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
-                      selectedUser.driver_applications.id_verification_status === 'verified'
+                      selectedUser.driver_applications?.id_verification_status === 'verified'
                         ? 'bg-emerald-500/10 text-emerald-450 border border-emerald-500/20'
-                        : selectedUser.driver_applications.id_verification_status === 'flagged'
+                        : selectedUser.driver_applications?.id_verification_status === 'flagged'
                         ? 'bg-rose-500/10 text-rose-450 border border-rose-500/20'
                         : 'bg-slate-800 text-slate-400'
                     }`}>
-                      {selectedUser.driver_applications.id_verification_status}
+                      {selectedUser.driver_applications?.id_verification_status}
                     </span>
                   </div>
                 </div>
@@ -1340,13 +2936,13 @@ export const UserManagement = () => {
                   <div className="flex items-center justify-between mt-2.5">
                     <span className="text-xs font-bold text-white">Status</span>
                     <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
-                      selectedUser.driver_applications.license_verification_status === 'verified'
+                      selectedUser.driver_applications?.license_verification_status === 'verified'
                         ? 'bg-emerald-500/10 text-emerald-450 border border-emerald-500/20'
-                        : selectedUser.driver_applications.license_verification_status === 'flagged'
+                        : selectedUser.driver_applications?.license_verification_status === 'flagged'
                         ? 'bg-rose-500/10 text-rose-450 border border-rose-500/20'
                         : 'bg-slate-800 text-slate-400'
                     }`}>
-                      {selectedUser.driver_applications.license_verification_status}
+                      {selectedUser.driver_applications?.license_verification_status}
                     </span>
                   </div>
                 </div>
@@ -1357,13 +2953,13 @@ export const UserManagement = () => {
                   <div className="flex items-center justify-between mt-2.5">
                     <span className="text-xs font-bold text-white">Verdict</span>
                     <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${
-                      selectedUser.driver_applications.screening_verdict === 'approve'
+                      selectedUser.driver_applications?.screening_verdict === 'approve'
                         ? 'bg-emerald-500/10 text-emerald-450 border border-emerald-500/20'
-                        : selectedUser.driver_applications.screening_verdict === 'reject'
+                        : selectedUser.driver_applications?.screening_verdict === 'reject'
                         ? 'bg-rose-500/10 text-rose-450 border border-rose-500/20'
                         : 'bg-amber-500/10 text-amber-450 border border-amber-500/20'
                     }`}>
-                      {selectedUser.driver_applications.screening_verdict?.replace(/_/g, ' ') || 'Pending'}
+                      {selectedUser.driver_applications?.screening_verdict?.replace(/_/g, ' ') || 'Pending'}
                     </span>
                   </div>
                 </div>
@@ -1371,13 +2967,13 @@ export const UserManagement = () => {
               </div>
 
               {/* Warnings / Flags Alert */}
-              {selectedUser.driver_applications.verification_flags && selectedUser.driver_applications.verification_flags.length > 0 && (
+              {selectedUser.driver_applications?.verification_flags && selectedUser.driver_applications?.verification_flags.length > 0 && (
                 <div className="bg-amber-500/5 border border-amber-500/15 p-4.5 rounded-2xl flex items-start gap-3">
                   <ShieldAlert className="w-5 h-5 text-amber-450 shrink-0 mt-0.5" />
                   <div>
                     <h4 className="text-xs font-black text-amber-450 uppercase tracking-wider">AI Flags & Mismatch Alerts</h4>
                     <ul className="list-disc pl-4 text-xs text-slate-350 space-y-1 mt-2 font-semibold">
-                      {selectedUser.driver_applications.verification_flags.map((flag: string, i: number) => (
+                      {selectedUser.driver_applications?.verification_flags.map((flag: string, i: number) => (
                         <li key={i}>{flag}</li>
                       ))}
                     </ul>
@@ -1398,23 +2994,23 @@ export const UserManagement = () => {
                       <span className="w-2 h-2 rounded-full bg-brand-blue" />
                       Zimbabwe National ID (Extracted)
                     </h4>
-                    {selectedUser.driver_applications.id_extracted_data ? (
+                    {selectedUser.driver_applications?.id_extracted_data ? (
                       <div className="grid grid-cols-2 gap-3 text-xs font-semibold">
                         <div>
                           <span className="text-slate-500 block text-[10px] uppercase font-bold">Full Name</span>
-                          <span className="text-slate-200 mt-0.5 block">{selectedUser.driver_applications.id_extracted_data.full_name || 'N/A'}</span>
+                          <span className="text-slate-200 mt-0.5 block">{selectedUser.driver_applications?.id_extracted_data.full_name || 'N/A'}</span>
                         </div>
                         <div>
                           <span className="text-slate-500 block text-[10px] uppercase font-bold">ID Number</span>
-                          <span className="text-slate-200 mt-0.5 block font-mono">{selectedUser.driver_applications.id_extracted_data.id_number || 'N/A'}</span>
+                          <span className="text-slate-200 mt-0.5 block font-mono">{selectedUser.driver_applications?.id_extracted_data.id_number || 'N/A'}</span>
                         </div>
                         <div>
                           <span className="text-slate-500 block text-[10px] uppercase font-bold">Date of Birth</span>
-                          <span className="text-slate-200 mt-0.5 block">{selectedUser.driver_applications.id_extracted_data.date_of_birth || 'N/A'}</span>
+                          <span className="text-slate-200 mt-0.5 block">{selectedUser.driver_applications?.id_extracted_data.date_of_birth || 'N/A'}</span>
                         </div>
                         <div>
                           <span className="text-slate-500 block text-[10px] uppercase font-bold">Confidence</span>
-                          <span className="text-slate-200 mt-0.5 block capitalize">{selectedUser.driver_applications.id_extracted_data.confidence || 'N/A'}</span>
+                          <span className="text-slate-200 mt-0.5 block capitalize">{selectedUser.driver_applications?.id_extracted_data.confidence || 'N/A'}</span>
                         </div>
                       </div>
                     ) : (
@@ -1428,23 +3024,23 @@ export const UserManagement = () => {
                       <span className="w-2 h-2 rounded-full bg-brand-blue" />
                       Driver's License (Extracted)
                     </h4>
-                    {selectedUser.driver_applications.license_extracted_data ? (
+                    {selectedUser.driver_applications?.license_extracted_data ? (
                       <div className="grid grid-cols-2 gap-3 text-xs font-semibold">
                         <div>
                           <span className="text-slate-500 block text-[10px] uppercase font-bold">Full Name</span>
-                          <span className="text-slate-200 mt-0.5 block">{selectedUser.driver_applications.license_extracted_data.full_name || 'N/A'}</span>
+                          <span className="text-slate-200 mt-0.5 block">{selectedUser.driver_applications?.license_extracted_data.full_name || 'N/A'}</span>
                         </div>
                         <div>
                           <span className="text-slate-500 block text-[10px] uppercase font-bold">License Number</span>
-                          <span className="text-slate-200 mt-0.5 block font-mono">{selectedUser.driver_applications.license_extracted_data.id_number || 'N/A'}</span>
+                          <span className="text-slate-200 mt-0.5 block font-mono">{selectedUser.driver_applications?.license_extracted_data.id_number || 'N/A'}</span>
                         </div>
                         <div>
                           <span className="text-slate-500 block text-[10px] uppercase font-bold">Expiry Date</span>
-                          <span className="text-slate-200 mt-0.5 block">{selectedUser.driver_applications.license_extracted_data.expiry_date || 'N/A'}</span>
+                          <span className="text-slate-200 mt-0.5 block">{selectedUser.driver_applications?.license_extracted_data.expiry_date || 'N/A'}</span>
                         </div>
                         <div>
                           <span className="text-slate-500 block text-[10px] uppercase font-bold">Confidence</span>
-                          <span className="text-slate-200 mt-0.5 block capitalize">{selectedUser.driver_applications.license_extracted_data.confidence || 'N/A'}</span>
+                          <span className="text-slate-200 mt-0.5 block capitalize">{selectedUser.driver_applications?.license_extracted_data.confidence || 'N/A'}</span>
                         </div>
                       </div>
                     ) : (
@@ -1461,26 +3057,26 @@ export const UserManagement = () => {
                     <div>
                       <span className="text-slate-500 block text-[10px] uppercase font-bold">AI Reasoning</span>
                       <p className="text-slate-200 mt-1.5 leading-relaxed bg-slate-950/40 p-4 rounded-xl border border-slate-800/80">
-                        {selectedUser.driver_applications.screening_reasoning || 'No details.'}
+                        {selectedUser.driver_applications?.screening_reasoning || 'No details.'}
                       </p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <span className="text-slate-500 block text-[10px] uppercase font-bold">Extracted Vehicle</span>
-                        <span className="text-slate-200 mt-1 block capitalize font-extrabold">{selectedUser.driver_applications.vehicle_type || 'N/A'}</span>
+                        <span className="text-slate-200 mt-1 block capitalize font-extrabold">{selectedUser.driver_applications?.vehicle_type || 'N/A'}</span>
                       </div>
                       <div>
                         <span className="text-slate-500 block text-[10px] uppercase font-bold">Extracted Coverage Area</span>
-                        <span className="text-slate-200 mt-1 block capitalize font-extrabold">{selectedUser.driver_applications.coverage_area || 'N/A'}</span>
+                        <span className="text-slate-200 mt-1 block capitalize font-extrabold">{selectedUser.driver_applications?.coverage_area || 'N/A'}</span>
                       </div>
                     </div>
 
-                    {selectedUser.driver_applications.screening_concerns && selectedUser.driver_applications.screening_concerns.length > 0 && (
+                    {selectedUser.driver_applications?.screening_concerns && selectedUser.driver_applications?.screening_concerns.length > 0 && (
                       <div>
                         <span className="text-rose-450 block font-black uppercase tracking-wider text-[10px] mt-2">Flagged Chat Concerns</span>
                         <ul className="list-disc pl-4 text-rose-400 space-y-1 mt-2 font-bold">
-                          {selectedUser.driver_applications.screening_concerns.map((concern: string, i: number) => (
+                          {selectedUser.driver_applications?.screening_concerns.map((concern: string, i: number) => (
                             <li key={i}>{concern}</li>
                           ))}
                         </ul>
@@ -1492,11 +3088,11 @@ export const UserManagement = () => {
               </div>
 
               {/* Chat Transcript Drawer */}
-              {selectedUser.driver_applications.screening_transcript && selectedUser.driver_applications.screening_transcript.length > 0 && (
+              {selectedUser.driver_applications?.screening_transcript && selectedUser.driver_applications?.screening_transcript.length > 0 && (
                 <div className="space-y-3 shrink-0">
                   <h3 className="text-xs font-black uppercase tracking-wider text-slate-450">Screening Chat Transcript</h3>
                   <div className="bg-slate-950/20 border border-slate-850 rounded-2xl p-5 max-h-[220px] overflow-y-auto space-y-3 text-xs">
-                    {selectedUser.driver_applications.screening_transcript.map((msg: any, i: number) => {
+                    {selectedUser.driver_applications?.screening_transcript.map((msg: any, i: number) => {
                       const isUser = msg.role === 'user';
                       return (
                         <div key={i} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
@@ -1518,6 +3114,52 @@ export const UserManagement = () => {
               )}
 
             </div>
+
+            {/* Modal Footer with Direct Courier Approval Actions */}
+            <div className="border-t border-slate-800 pt-5 mt-4 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-400">Current Status:</span>
+                <span className={`font-black uppercase px-2.5 py-1 rounded-lg ${
+                  selectedUser.drivers?.verification_status === 'approved'
+                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                    : selectedUser.drivers?.verification_status === 'rejected'
+                    ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                    : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                }`}>
+                  {selectedUser.drivers?.verification_status || 'PENDING APPROVAL'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowDetailsModal(false)}
+                  className="px-5 py-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                >
+                  Close
+                </button>
+
+                {selectedUser.drivers?.verification_status !== 'rejected' && (
+                  <button
+                    onClick={() => handleRejectDriver(selectedUser)}
+                    className="px-5 py-2.5 bg-rose-500/15 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    <span>Reject</span>
+                  </button>
+                )}
+
+                {selectedUser.drivers?.verification_status !== 'approved' && (
+                  <button
+                    onClick={() => handleApproveDriver(selectedUser)}
+                    className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl transition-all shadow-lg shadow-emerald-500/20 cursor-pointer flex items-center gap-2"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Approve Courier</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
       )}

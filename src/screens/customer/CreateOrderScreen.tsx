@@ -1,8 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, StatusBar, Image, Modal } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+    View, 
+    Text, 
+    TextInput, 
+    StyleSheet, 
+    ScrollView, 
+    TouchableOpacity, 
+    Alert, 
+    ActivityIndicator, 
+    KeyboardAvoidingView, 
+    Platform, 
+    StatusBar, 
+    Image, 
+    Modal,
+    Keyboard
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
 import { useOrderStore } from '../../store/orderStore';
 import { orderService } from '../../services/orderService';
@@ -11,6 +26,7 @@ import { aiService } from '../../services/aiService';
 import { userService } from '../../services/userService';
 import { supabase } from '../../utils/supabase';
 import { PaymentMethod } from '../../types';
+import { locationSearchService, AddressSuggestion } from '../../services/locationSearchService';
 
 export const CreateOrderScreen = ({ route, navigation }: any) => {
     const { 
@@ -27,9 +43,12 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
     } = useOrderStore();
     const { user } = useAuthStore();
 
+    // Wizard Step: 1 = Route & Package, 2 = Recipient, 3 = Payment & Fare
+    const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
+
     // AI States
     const [isScanning, setIsScanning] = useState(false);
-    const [suggestions, setSuggestions] = useState<string[]>([]);
+    const [errandSuggestions, setErrandSuggestions] = useState<string[]>([]);
 
     // Pricing States
     const [estimatedCost, setEstimatedCost] = useState(12.50);
@@ -54,12 +73,28 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
     const [enableSmsUpdates, setEnableSmsUpdates] = useState(false);
     const [smsFee, setSmsFee] = useState(0.25);
 
+    // Inline Address Suggestion States
+    const [activeAddressField, setActiveAddressField] = useState<'pickup' | 'dropoff' | 'errand' | null>(null);
+    const [inlineSuggestions, setInlineSuggestions] = useState<AddressSuggestion[]>([]);
+    const [loadingInlineSuggestions, setLoadingInlineSuggestions] = useState(false);
+    const inlineSearchDebounce = useRef<any>(null);
+
     // Cancellation Debt States
     const [unsettledDebt, setUnsettledDebt] = useState<number>(0);
     const [debtModalVisible, setDebtModalVisible] = useState(false);
     const [settlingDebt, setSettlingDebt] = useState(false);
     const [debtPaymentMethod, setDebtPaymentMethod] = useState<'ecocash' | 'innbucks'>('ecocash');
     const [debtPaymentPhone, setDebtPaymentPhone] = useState('');
+
+    // Payment Selection State
+    const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash_on_delivery');
+    const [paymentPhone, setPaymentPhone] = useState(user?.phone || user?.user_metadata?.phone || '');
+
+    // Auth & Loading State
+    const [loading, setLoading] = useState(false);
+    const [stepErrors, setStepErrors] = useState<{ [key: string]: string }>({});
+
+    const isDelivery = serviceType === 'delivery';
 
     useEffect(() => {
         if (user?.id) {
@@ -97,6 +132,218 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
         }
     };
 
+    // Initialize service type from route if provided
+    useEffect(() => {
+        if (route.params?.serviceType) {
+            setServiceType(route.params.serviceType);
+        }
+    }, [route.params?.serviceType]);
+
+    // Handle incoming parameters from MapLocationPicker
+    useEffect(() => {
+        const { selectedCoordinate, selectedAddress, locationType, timestamp } = route.params || {};
+        
+        if (selectedCoordinate && selectedAddress && locationType && timestamp) {
+            switch (locationType) {
+                case 'pickup':
+                    setPickup(selectedAddress, selectedCoordinate);
+                    break;
+                case 'dropoff':
+                    setDropoff(selectedAddress, selectedCoordinate);
+                    break;
+                case 'store':
+                    setErrand(selectedAddress, selectedCoordinate);
+                    break;
+            }
+            setActiveAddressField(null);
+            setInlineSuggestions([]);
+        }
+    }, [route.params?.timestamp]);
+
+    // Fetch system settings on load
+    useEffect(() => {
+        const fetchSettings = async () => {
+            try {
+                const data = await userService.getSystemSettings();
+                if (data) {
+                    setPricingSettings({
+                        base_delivery_fee: parseFloat(data.base_delivery_fee || '5.00'),
+                        per_km_rate: parseFloat(data.per_km_rate || '1.50')
+                    });
+                    if (data.sms_notification_fee !== undefined && data.sms_notification_fee !== null) {
+                        setSmsFee(parseFloat(data.sms_notification_fee) || 0.25);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to load system settings for pricing:', err);
+            }
+        };
+        fetchSettings();
+    }, []);
+
+    // Calculate price dynamically when coords change
+    useEffect(() => {
+        const baseFee = pricingSettings?.base_delivery_fee ?? 5.00;
+        const perKmRate = pricingSettings?.per_km_rate ?? 1.50;
+
+        const startCoords = isDelivery ? pickupCoords : errandCoords;
+        const endCoords = dropoffCoords;
+
+        if (startCoords && endCoords) {
+            const R = 6371; // Earth radius in km
+            const dLat = (endCoords.latitude - startCoords.latitude) * Math.PI / 180;
+            const dLon = (endCoords.longitude - startCoords.longitude) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(startCoords.latitude * Math.PI / 180) * Math.cos(endCoords.latitude * Math.PI / 180) * 
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const distance = R * c;
+
+            const calculatedCost = baseFee + (distance * perKmRate);
+            setEstimatedCost(Math.round(calculatedCost * 100) / 100);
+        } else {
+            setEstimatedCost(baseFee);
+        }
+    }, [pickupCoords, dropoffCoords, errandCoords, serviceType, pricingSettings]);
+
+    // Sync custom bid with estimated cost updates
+    useEffect(() => {
+        setBidPrice(estimatedCost.toFixed(2));
+    }, [estimatedCost]);
+
+    const adjustBid = (amount: number) => {
+        const current = parseFloat(bidPrice) || estimatedCost;
+        const next = Math.max(0.50, current + amount);
+        setBidPrice(next.toFixed(2));
+    };
+
+    // Smart Errand Assistant Logic
+    useEffect(() => {
+        if (errandLocation) {
+            generateSmartSuggestions(errandLocation);
+        }
+    }, [errandLocation]);
+
+    const generateSmartSuggestions = (location: string) => {
+        const loc = (location || '').toLowerCase();
+        let items: string[] = [];
+        
+        if (loc.includes('pharmacy') || loc.includes('chemist') || loc.includes('med')) {
+            items = ['Painkillers', 'Vitamins', 'First Aid Kit', 'Prescription', 'Face Masks'];
+        } else if (loc.includes('grocery') || loc.includes('supermarket') || loc.includes('spar') || loc.includes('pick n pay') || loc.includes('ok')) {
+            items = ['Milk (2L)', 'Fresh Bread', 'Eggs (Dozen)', 'Bottled Water', 'Snacks'];
+        } else if (loc.includes('fast food') || loc.includes('pizza') || loc.includes('burger') || loc.includes('chicken') || loc.includes('kfc')) {
+            items = ['Combo Meal', 'Extra Fries', 'Large Soda', 'Napkins', 'Sauces'];
+        } else if (loc.includes('office') || loc.includes('stationery') || loc.includes('print')) {
+            items = ['A4 Paper', 'Ink Cartridge', 'Pens/Markers', 'Envelopes', 'Notebooks'];
+        } else {
+            items = ['General Pickup', 'Document Drop', 'Urgent Delivery', 'Small Package'];
+        }
+        setErrandSuggestions(items);
+    };
+
+    const addSuggestionToErrand = (item: string) => {
+        const currentList = (errandList || '').trim();
+        const newList = currentList ? `${currentList}\n- ${item}` : `- ${item}`;
+        setErrandInstructions(newList);
+    };
+
+    // Live address search suggestions inline
+    const handleInlineAddressSearch = (text: string, field: 'pickup' | 'dropoff' | 'errand') => {
+        setActiveAddressField(field);
+
+        if (field === 'pickup') setPickup(text, null);
+        else if (field === 'dropoff') setDropoff(text, null);
+        else if (field === 'errand') setErrand(text, null);
+
+        if (inlineSearchDebounce.current) clearTimeout(inlineSearchDebounce.current);
+
+        if (text.trim().length < 2) {
+            setInlineSuggestions([]);
+            setLoadingInlineSuggestions(false);
+            return;
+        }
+
+        setLoadingInlineSuggestions(true);
+        inlineSearchDebounce.current = setTimeout(async () => {
+            try {
+                const results = await locationSearchService.searchAddresses(text);
+                setInlineSuggestions(results);
+            } catch (err) {
+                console.warn('Inline address search err:', err);
+            } finally {
+                setLoadingInlineSuggestions(false);
+            }
+        }, 300);
+    };
+
+    const selectInlineSuggestion = async (sugg: AddressSuggestion, field: 'pickup' | 'dropoff' | 'errand') => {
+        Keyboard.dismiss();
+        setLoadingInlineSuggestions(true);
+        try {
+            const coords = await locationSearchService.resolveCoordinates(sugg);
+            if (field === 'pickup') {
+                setPickup(sugg.fullAddress, coords);
+            } else if (field === 'dropoff') {
+                setDropoff(sugg.fullAddress, coords);
+            } else if (field === 'errand') {
+                setErrand(sugg.fullAddress, coords);
+            }
+        } catch (e) {
+            console.warn(e);
+        } finally {
+            setLoadingInlineSuggestions(false);
+            setInlineSuggestions([]);
+            setActiveAddressField(null);
+        }
+    };
+
+    const handleScanPackage = async () => {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (permission.status !== 'granted') {
+            Alert.alert('Permission Denied', 'Camera access is required to scan your package.');
+            return;
+        }
+
+        const result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            quality: 0.5,
+            base64: true,
+        });
+
+        if (!result.canceled) {
+            setPackageImage(result.assets[0].uri);
+            performAIScan(result.assets[0].base64 || undefined);
+        }
+    };
+
+    const performAIScan = async (base64Image?: string) => {
+        if (!base64Image) {
+            Alert.alert('Scan Error', 'No image data captured.');
+            return;
+        }
+        setIsScanning(true);
+        try {
+            const result = await aiService.classifyPackage(base64Image);
+            setAIEstimate(result.size_category);
+            const prefix = `[AI Dimensions: ${result.dimensions} | Est. Weight: ${result.estimated_weight}]`;
+            const newDesc = packageDescription ? `${prefix}\n${packageDescription}` : prefix;
+            setPackageDesc(newDesc);
+
+            Alert.alert(
+                'AI Analysis Complete', 
+                `Our AI detected a ${result.size_category} (${result.dimensions}, ${result.estimated_weight}). We've updated your vehicle recommendation.`
+            );
+        } catch (error: any) {
+            console.error('Gemini classification error:', error);
+            setAIEstimate('Medium Box');
+        } finally {
+            setIsScanning(false);
+        }
+    };
+
     const handleApplyPromo = async () => {
         const cleanCode = promoCodeInput.trim().toUpperCase();
         if (!cleanCode) {
@@ -109,7 +356,6 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
         setPromoMessage(null);
 
         try {
-            // 1. Query vouchers table for active voucher
             const { data: voucher, error } = await supabase
                 .from('vouchers')
                 .select('*')
@@ -118,7 +364,6 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                 .single();
 
             if (error || !voucher) {
-                // Fallback client check for default WELCOME263
                 if (cleanCode === 'WELCOME263') {
                     if (currentFare < 4.00) {
                         setPromoMessage({ text: 'Requires minimum order of $4.00', isError: true });
@@ -136,14 +381,12 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                 return;
             }
 
-            // 2. Validate minimum order amount
             const minAmount = parseFloat(voucher.min_order_amount || '4.00');
             if (currentFare < minAmount) {
                 setPromoMessage({ text: `Requires minimum order of $${minAmount.toFixed(2)}`, isError: true });
                 return;
             }
 
-            // 3. Check if user already redeemed this voucher
             if (user) {
                 const { data: redemption } = await supabase
                     .from('voucher_redemptions')
@@ -182,192 +425,69 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
         setPromoMessage(null);
     };
 
-    // Sync custom bid with estimated cost updates
-    useEffect(() => {
-        setBidPrice(estimatedCost.toFixed(2));
-    }, [estimatedCost]);
-
-    const adjustBid = (amount: number) => {
-        const current = parseFloat(bidPrice) || estimatedCost;
-        const next = Math.max(0.50, current + amount);
-        setBidPrice(next.toFixed(2));
-    };
-
-    // Fetch settings on load
-    useEffect(() => {
-        const fetchSettings = async () => {
-            try {
-                const data = await userService.getSystemSettings();
-                if (data) {
-                    setPricingSettings({
-                        base_delivery_fee: parseFloat(data.base_delivery_fee || '5.00'),
-                        per_km_rate: parseFloat(data.per_km_rate || '1.50')
-                    });
-                    if (data.sms_notification_fee !== undefined && data.sms_notification_fee !== null) {
-                        setSmsFee(parseFloat(data.sms_notification_fee) || 0.25);
-                    }
-                }
-            } catch (err) {
-                console.error('Failed to load system settings for pricing:', err);
+    // Step Validation
+    const validateStep1 = () => {
+        const errors: { [key: string]: string } = {};
+        if (isDelivery) {
+            if (!pickupAddress || pickupAddress.trim().length === 0) {
+                errors.pickup = 'Please provide a pickup address or pin on map';
             }
-        };
-        fetchSettings();
-    }, []);
-
-    // Calculate price dynamically when coords change
-    useEffect(() => {
-        const baseFee = pricingSettings?.base_delivery_fee ?? 5.00;
-        const perKmRate = pricingSettings?.per_km_rate ?? 1.50;
-
-        const startCoords = isDelivery ? pickupCoords : errandCoords;
-        const endCoords = dropoffCoords;
-
-        if (startCoords && endCoords) {
-            // Calculate Haversine distance
-            const R = 6371; // Earth radius in km
-            const dLat = (endCoords.latitude - startCoords.latitude) * Math.PI / 180;
-            const dLon = (endCoords.longitude - startCoords.longitude) * Math.PI / 180;
-            const a = 
-                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(startCoords.latitude * Math.PI / 180) * Math.cos(endCoords.latitude * Math.PI / 180) * 
-                Math.sin(dLon / 2) * Math.sin(dLon / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            const distance = R * c;
-
-            // Compute fee: base fee + (distance * per km rate)
-            const calculatedCost = baseFee + (distance * perKmRate);
-            setEstimatedCost(Math.round(calculatedCost * 100) / 100);
         } else {
-            // Default base fee if coordinates are not fully selected
-            setEstimatedCost(baseFee);
-        }
-    }, [pickupCoords, dropoffCoords, errandCoords, serviceType, pricingSettings]);
-
-    // Auth & Loading State
-    const [loading, setLoading] = useState(false);
-    const [showErrors, setShowErrors] = useState(false);
-
-    // Payment Selection State
-    const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash_on_delivery');
-    const [paymentPhone, setPaymentPhone] = useState(user?.phone || user?.user_metadata?.phone || '');
-
-    const isDelivery = serviceType === 'delivery';
-
-    // Smart Errand Assistant Logic
-    useEffect(() => {
-        if (errandLocation) {
-            generateSmartSuggestions(errandLocation);
-        }
-    }, [errandLocation]);
-
-    const generateSmartSuggestions = (location: string) => {
-        const loc = (location || '').toLowerCase();
-        let items: string[] = [];
-        
-        if (loc.includes('pharmacy') || loc.includes('chemist') || loc.includes('med')) {
-            items = ['Painkillers', 'Vitamins', 'First Aid Kit', 'Prescription', 'Face Masks'];
-        } else if (loc.includes('grocery') || loc.includes('supermarket') || loc.includes('spar') || loc.includes('pick n pay')) {
-            items = ['Milk (2L)', 'Fresh Bread', 'Eggs (Dozen)', 'Bottled Water', 'Snacks'];
-        } else if (loc.includes('fast food') || loc.includes('pizza') || loc.includes('burger') || loc.includes('chicken')) {
-            items = ['Combo Meal', 'Extra Fries', 'Large Soda', 'Napkins', 'Condiments'];
-        } else if (loc.includes('office') || loc.includes('stationery') || loc.includes('print')) {
-            items = ['A4 Paper', 'Ink Cartridge', 'Pens/Markers', 'Envelopes', 'Folders'];
-        } else {
-            items = ['General Pickup', 'Document Drop', 'Urgent Delivery', 'Small Package'];
-        }
-        setSuggestions(items);
-    };
-
-    const addSuggestionToErrand = (item: string) => {
-        const currentList = (errandList || '').trim();
-        const newList = currentList ? `${currentList}\n- ${item}` : `- ${item}`;
-        setErrandInstructions(newList);
-    };
-
-    // Initialize service type from route if provided
-    useEffect(() => {
-        if (route.params?.serviceType) {
-            setServiceType(route.params.serviceType);
-        }
-    }, [route.params?.serviceType]);
-
-    // Handle incoming parameters from MapLocationPicker
-    useEffect(() => {
-        const { selectedCoordinate, selectedAddress, locationType, timestamp } = route.params || {};
-        
-        if (selectedCoordinate && selectedAddress && locationType && timestamp) {
-            switch (locationType) {
-                case 'pickup':
-                    setPickup(selectedAddress, selectedCoordinate);
-                    break;
-                case 'dropoff':
-                    setDropoff(selectedAddress, selectedCoordinate);
-                    break;
-                case 'store':
-                    setErrand(selectedAddress, selectedCoordinate);
-                    break;
+            if (!errandLocation || errandLocation.trim().length === 0) {
+                errors.errand = 'Please specify the store or errand location';
             }
         }
-    }, [route.params?.timestamp]);
-
-    const handleScanPackage = async () => {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (permission.status !== 'granted') {
-            Alert.alert('Permission Denied', 'Camera access is required to scan your package.');
-            return;
+        if (!dropoffAddress || dropoffAddress.trim().length === 0) {
+            errors.dropoff = 'Please provide a drop-off delivery address';
         }
+        setStepErrors(errors);
+        return Object.keys(errors).length === 0;
+    };
 
-        const result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            quality: 0.5,
-            base64: true,
-        });
+    const validateStep2 = () => {
+        const errors: { [key: string]: string } = {};
+        if (!isRecipientSelf) {
+            if (!recipientName.trim()) {
+                errors.recipientName = 'Recipient name is required';
+            }
+            if (!recipientPhone.trim() || recipientPhone.trim().length < 6) {
+                errors.recipientPhone = 'Valid recipient phone number is required';
+            }
+        }
+        if (enableSmsUpdates) {
+            const phoneForSms = !isRecipientSelf ? recipientPhone : (paymentPhone || user?.phone || user?.user_metadata?.phone);
+            if (!phoneForSms || phoneForSms.trim().length < 6) {
+                errors.smsPhone = 'A valid phone number is required to receive SMS updates';
+            }
+        }
+        setStepErrors(errors);
+        return Object.keys(errors).length === 0;
+    };
 
-        if (!result.canceled) {
-            setPackageImage(result.assets[0].uri);
-            performAIScan(result.assets[0].base64 || undefined);
+    const handleNextStep = () => {
+        if (currentStep === 1) {
+            if (!validateStep1()) {
+                Alert.alert('Incomplete Route', 'Please fill in both pickup and drop-off points to continue.');
+                return;
+            }
+            setCurrentStep(2);
+        } else if (currentStep === 2) {
+            if (!validateStep2()) {
+                Alert.alert('Recipient Details Needed', 'Please complete the recipient phone and name.');
+                return;
+            }
+            setCurrentStep(3);
         }
     };
 
-    const performAIScan = async (base64Image?: string) => {
-        if (!base64Image) {
-            Alert.alert('Scan Error', 'No image data captured.');
-            return;
-        }
-        setIsScanning(true);
-        try {
-            const result = await aiService.classifyPackage(base64Image);
-            setAIEstimate(result.size_category);
-            
-            // Auto-populate dimensions in the description text field
-            const prefix = `[AI Dimensions: ${result.dimensions} | Est. Weight: ${result.estimated_weight}]`;
-            const newDesc = packageDescription ? `${prefix}\n${packageDescription}` : prefix;
-            setPackageDesc(newDesc);
-
-            Alert.alert(
-                'AI Analysis Complete', 
-                `Our AI detected a ${result.size_category} (${result.dimensions}, ${result.estimated_weight}). We've updated your vehicle recommendation.`
-            );
-        } catch (error: any) {
-            console.error('Gemini classification error:', error);
-            Alert.alert(
-                'AI Scan Error', 
-                'We couldn\'t classify the package automatically. Defaulting to standard categories.'
-            );
-            setAIEstimate('Medium Box');
-        } finally {
-            setIsScanning(false);
-        }
+    const handlePrevStep = () => {
+        if (currentStep === 3) setCurrentStep(2);
+        else if (currentStep === 2) setCurrentStep(1);
     };
 
     const handlePlaceOrder = async () => {
-        const hasPickup = isDelivery ? !!pickupAddress : !!errandLocation;
-        const hasDropoff = !!dropoffAddress;
-
-        if (!hasDropoff || !hasPickup) {
-            setShowErrors(true);
-            Alert.alert('Missing Fields', 'Please select both pickup and drop-off locations on the map.');
+        if (!validateStep1() || !validateStep2()) {
+            Alert.alert('Missing Details', 'Please review previous steps before confirming.');
             return;
         }
 
@@ -389,8 +509,12 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
             return;
         }
 
+        if ((paymentMethod === 'ecocash' || paymentMethod === 'innbucks') && (!paymentPhone || paymentPhone.trim().length < 6)) {
+            Alert.alert('Missing Mobile Number', `Please enter a valid ${paymentMethod === 'ecocash' ? 'EcoCash' : 'InnBucks'} mobile number.`);
+            return;
+        }
+
         setLoading(true);
-        setShowErrors(false);
         try {
             if (!user) throw new Error("No user session found");
 
@@ -398,21 +522,6 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
             const discountAmount = appliedVoucher ? Math.min(appliedVoucher.discount, grossAmount) : 0;
             const smsAddonFee = enableSmsUpdates ? smsFee : 0;
             const finalPayable = Math.max(0.50, Math.round((grossAmount - discountAmount + smsAddonFee) * 100) / 100);
-
-            if ((paymentMethod === 'ecocash' || paymentMethod === 'innbucks') && (!paymentPhone || paymentPhone.trim().length < 6)) {
-                Alert.alert('Missing Mobile Number', `Please enter a valid ${paymentMethod === 'ecocash' ? 'EcoCash' : 'InnBucks'} mobile number.`);
-                setLoading(false);
-                return;
-            }
-
-            if (enableSmsUpdates) {
-                const phoneForSms = !isRecipientSelf ? recipientPhone : (paymentPhone || user?.phone || user?.user_metadata?.phone);
-                if (!phoneForSms || phoneForSms.trim().length < 6) {
-                    Alert.alert('Mobile Number Required', 'Please enter a valid phone number for the recipient to receive SMS & WhatsApp milestone updates.');
-                    setLoading(false);
-                    return;
-                }
-            }
 
             const isCod = paymentMethod === 'cash_on_delivery';
             const cashToCollect = isCod ? finalPayable : 0.00;
@@ -481,11 +590,10 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
             setAppliedVoucher(null);
             setPromoCodeInput('');
             setPromoMessage(null);
-            setEstimatedCost(pricingSettings?.base_delivery_fee ?? 5.00);
-            setBidPrice((pricingSettings?.base_delivery_fee ?? 5.00).toFixed(2));
+            setCurrentStep(1);
             
             Alert.alert(
-                "Order Confirmed", 
+                "Order Confirmed! 🚀", 
                 "Your request has been placed and is waiting for your Mate!", 
                 [{ 
                     text: "Track Order", 
@@ -501,20 +609,20 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
 
     const handleFillMockData = () => {
         if (isDelivery) {
-            setPickup('123 Green Ave, Silicon Valley', { latitude: 37.78825, longitude: -122.4324 });
-            setDropoff('456 Blue Blvd, San Francisco', { latitude: 37.8000, longitude: -122.4200 });
-            setPackageDesc('Large Parcel with Electronics');
+            setPickup('Joina City, Jason Moyo Ave, Harare', { latitude: -17.8312, longitude: 31.0494 });
+            setDropoff('Sam Levy\'s Village, Borrowdale, Harare', { latitude: -17.7558, longitude: 31.0858 });
+            setPackageDesc('Office Documents and Electronics');
         } else {
-            setErrand('Whole Foods Market, SOMA', { latitude: 37.7700, longitude: -122.4000 });
-            setDropoff('My Apartment, 789 Red St', { latitude: 37.7800, longitude: -122.4100 });
-            setErrandInstructions('- Milk\n- Bread\n- Fresh Apples');
+            setErrand('Avondale Shopping Centre, Harare', { latitude: -17.7981, longitude: 31.0396 });
+            setDropoff('Westgate Shopping Mall, Harare', { latitude: -17.7667, longitude: 30.9744 });
+            setErrandInstructions('- Milk\n- Bread\n- Painkillers from pharmacy');
         }
         setIsRecipientSelf(false);
-        setRecipientName('Farai Gumbo');
+        setRecipientName('Tendai Moyo');
         setRecipientPhone('+263772987654');
-        setRecipientNotes('Ring buzzer 4B at the front security gate');
+        setRecipientNotes('Ring buzzer 4B at security gate');
         setEnableSmsUpdates(true);
-        setShowErrors(false);
+        setStepErrors({});
     };
 
     const currentFare = parseFloat(bidPrice) || estimatedCost;
@@ -523,778 +631,1729 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
     const currentTotalPayable = Math.max(0.50, Math.round((currentFare - currentDiscount + currentSmsFee) * 100) / 100);
 
     return (
-        <LinearGradient
-            colors={['#F8FAFC', '#E2E8F0']}
-            style={styles.container}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-        >
+        <LinearGradient colors={['#F8FAFC', '#EFF6FF']} style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
             <SafeAreaView style={styles.safeArea} edges={['bottom', 'left', 'right']}>
-                <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                    style={styles.keyboardView}
-                >
-                    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                        <View style={styles.headerContainer}>
-                            <Text style={styles.header}>New {isDelivery ? 'Delivery' : 'Errand'}</Text>
-                            <Text style={styles.subHeader}>Fill out the details below</Text>
-                        </View>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
 
-                        {unsettledDebt > 0 && (
-                            <View style={styles.debtBanner}>
-                                <View style={styles.debtBannerTop}>
-                                    <Text style={styles.debtBannerIcon}>⚠️</Text>
-                                    <View style={styles.debtBannerTextWrap}>
-                                        <Text style={styles.debtBannerTitle}>Unsettled Cancellation Fee</Text>
-                                        <Text style={styles.debtBannerDesc}>
-                                            You have an outstanding balance of ${unsettledDebt.toFixed(2)} USD from a previous cancellation. Please clear this to post a new request.
-                                        </Text>
-                                    </View>
-                                </View>
+                    {/* Compact Top Header & Service Selector */}
+                    <View style={styles.topHeader}>
+                        <View style={styles.headerTitleRow}>
+                            <View>
+                                <Text style={styles.screenTitle}>
+                                    {isDelivery ? 'Send Package' : 'Run Errand'}
+                                </Text>
+                                <Text style={styles.screenSubTitle}>
+                                    Step {currentStep} of 3 • {currentStep === 1 ? 'Route & Package' : currentStep === 2 ? 'Recipient Details' : 'Payment & Confirm'}
+                                </Text>
+                            </View>
+                            {/* Service Toggle */}
+                            <View style={styles.servicePillContainer}>
                                 <TouchableOpacity
-                                    style={styles.debtBannerActionBtn}
-                                    activeOpacity={0.8}
-                                    onPress={() => setDebtModalVisible(true)}
+                                    style={[styles.servicePill, isDelivery && styles.servicePillActive]}
+                                    onPress={() => setServiceType('delivery')}
+                                    activeOpacity={0.7}
                                 >
-                                    <Text style={styles.debtBannerActionText}>Clear Balance (${unsettledDebt.toFixed(2)})</Text>
+                                    <Text style={[styles.servicePillText, isDelivery && styles.servicePillTextActive]}>
+                                        📦 Delivery
+                                    </Text>
                                 </TouchableOpacity>
-                            </View>
-                        )}
-
-                        <BlurView intensity={20} tint="light" style={styles.formCard}>
-                            {isDelivery ? (
-                                <View style={styles.formSection}>
-                                    <View style={styles.sectionHeader}>
-                                        <Text style={styles.sectionIcon}>📍</Text>
-                                        <Text style={styles.sectionTitle}>Pickup Details</Text>
-                                    </View>
-                                    <Text style={styles.label}>Pickup Address</Text>
-                                    <TouchableOpacity
-                                        style={[styles.inputButton, showErrors && !pickupAddress ? styles.errorInput : null]}
-                                        activeOpacity={0.7}
-                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'pickup', serviceType })}
-                                    >
-                                        <Text style={pickupAddress ? styles.inputText : styles.placeholderText}>
-                                            {pickupAddress || "Tap to select pickup on map"}
-                                        </Text>
-                                    </TouchableOpacity>
-
-                                    <View style={styles.divider} />
-
-                                    <View style={styles.sectionHeader}>
-                                        <Text style={styles.sectionIcon}>🏁</Text>
-                                        <Text style={styles.sectionTitle}>Drop-off Details</Text>
-                                    </View>
-                                    <Text style={styles.label}>Drop-off Address</Text>
-                                    <TouchableOpacity
-                                        style={[styles.inputButton, showErrors && !dropoffAddress ? styles.errorInput : null]}
-                                        activeOpacity={0.7}
-                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'dropoff', serviceType })}
-                                    >
-                                        <Text style={dropoffAddress ? styles.inputText : styles.placeholderText}>
-                                            {dropoffAddress || "Tap to select drop-off on map"}
-                                        </Text>
-                                    </TouchableOpacity>
-
-                                    <View style={styles.divider} />
-
-                                    <View style={styles.sectionHeader}>
-                                        <Text style={styles.sectionIcon}>📷</Text>
-                                        <Text style={styles.sectionTitle}>Vision AI Scan</Text>
-                                    </View>
-                                    <Text style={styles.label}>Verify your package size for your Mate</Text>
-                                    
-                                    <TouchableOpacity 
-                                        style={styles.scanButton}
-                                        onPress={handleScanPackage}
-                                        disabled={isScanning}
-                                    >
-                                        <LinearGradient
-                                            colors={['#0F172A', '#1E293B']}
-                                            style={styles.scanGradient}
-                                        >
-                                            <Text style={styles.scanIcon}>📸</Text>
-                                            <Text style={styles.scanText}>
-                                                {packageImage ? 'Retake Photo' : 'Scan Package with AI'}
-                                            </Text>
-                                        </LinearGradient>
-                                    </TouchableOpacity>
-
-                                    {isScanning && (
-                                        <View style={styles.scanningContainer}>
-                                            <ActivityIndicator color="#055FEE" />
-                                            <Text style={styles.scanningText}>AI Analyzing Package...</Text>
-                                        </View>
-                                    )}
-
-                                    {packageImage && !isScanning && (
-                                        <View style={styles.previewContainer}>
-                                            <Image source={{ uri: packageImage }} style={styles.imagePreview} />
-                                            <BlurView intensity={80} tint="dark" style={styles.aiBadge}>
-                                                <Text style={styles.aiBadgeLabel}>AI DETECTED:</Text>
-                                                <Text style={styles.aiBadgeValue}>{aiEstimate || 'Calculating...'}</Text>
-                                            </BlurView>
-                                        </View>
-                                    )}
-
-                                    <View style={styles.divider} />
-
-                                    <View style={styles.sectionHeader}>
-                                        <Text style={styles.sectionIcon}>📦</Text>
-                                        <Text style={styles.sectionTitle}>Package Details</Text>
-                                    </View>
-                                    <Text style={styles.label}>What are we delivering?</Text>
-                                    <TextInput
-                                        style={[styles.input, styles.textArea]}
-                                        placeholder="Describe the package (e.g., Documents, Electronics)"
-                                        placeholderTextColor="#94A3B8"
-                                        value={packageDescription}
-                                        onChangeText={setPackageDesc}
-                                        multiline
-                                        selectionColor="#055FEE"
-                                    />
-                                </View>
-                            ) : (
-                                <View style={styles.formSection}>
-                                    <View style={styles.sectionHeader}>
-                                        <Text style={styles.sectionIcon}>🛒</Text>
-                                        <Text style={styles.sectionTitle}>Errand Details</Text>
-                                    </View>
-                                    <Text style={styles.label}>Store / Location</Text>
-                                    <TouchableOpacity
-                                        style={[styles.inputButton, showErrors && !errandLocation ? styles.errorInput : null]}
-                                        activeOpacity={0.7}
-                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'store', serviceType })}
-                                    >
-                                        <Text style={errandLocation ? styles.inputText : styles.placeholderText}>
-                                            {errandLocation || "Tap to select store on map"}
-                                        </Text>
-                                    </TouchableOpacity>
-
-                                    <View style={styles.divider} />
-
-                                    <Text style={styles.label}>Shopping List / Instructions</Text>
-                                    
-                                    {suggestions.length > 0 && (
-                                        <View style={styles.suggestionsWrapper}>
-                                            <Text style={styles.suggestionTitle}>AI SUGGESTIONS:</Text>
-                                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionsScroll}>
-                                                {suggestions.map((item, idx) => (
-                                                    <TouchableOpacity 
-                                                        key={idx} 
-                                                        style={styles.suggestionChip}
-                                                        onPress={() => addSuggestionToErrand(item)}
-                                                    >
-                                                        <Text style={styles.suggestionChipText}>+ {item}</Text>
-                                                    </TouchableOpacity>
-                                                ))}
-                                            </ScrollView>
-                                        </View>
-                                    )}
-
-                                    <TextInput
-                                        style={[styles.input, styles.textArea]}
-                                        placeholder="What do you need us to buy or do?"
-                                        placeholderTextColor="#94A3B8"
-                                        value={errandList}
-                                        onChangeText={setErrandInstructions}
-                                        multiline
-                                        selectionColor="#055FEE"
-                                    />
-
-                                    <View style={styles.divider} />
-
-                                    <View style={styles.sectionHeader}>
-                                        <Text style={styles.sectionIcon}>🏁</Text>
-                                        <Text style={styles.sectionTitle}>Delivery Details</Text>
-                                    </View>
-                                    <Text style={styles.label}>Delivery Address</Text>
-                                    <TouchableOpacity
-                                        style={[styles.inputButton, showErrors && !dropoffAddress ? styles.errorInput : null]}
-                                        activeOpacity={0.7}
-                                        onPress={() => navigation.navigate('MapLocationPicker', { locationType: 'dropoff', serviceType })}
-                                    >
-                                        <Text style={dropoffAddress ? styles.inputText : styles.placeholderText}>
-                                            {dropoffAddress || "Tap to drop-off on map"}
-                                        </Text>
-                                    </TouchableOpacity>
-                                </View>
-                            )}
-                        </BlurView>
-
-                        {/* Recipient Details Card */}
-                        <BlurView intensity={20} tint="light" style={styles.formCard}>
-                            <View style={styles.formSection}>
-                                <View style={styles.sectionHeader}>
-                                    <Text style={styles.sectionIcon}>👤</Text>
-                                    <Text style={styles.sectionTitle}>Recipient & Delivery Contact</Text>
-                                </View>
-                                <Text style={styles.paymentSubTitle}>Who will receive this package upon arrival?</Text>
-
-                                <View style={styles.tabToggleRow}>
-                                    <TouchableOpacity
-                                        style={[styles.tabToggleButton, isRecipientSelf && styles.tabToggleButtonActive]}
-                                        onPress={() => setIsRecipientSelf(true)}
-                                        activeOpacity={0.7}
-                                    >
-                                        <Text style={[styles.tabToggleText, isRecipientSelf && styles.tabToggleTextActive]}>
-                                            🙋 I'll Receive It
-                                        </Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                        style={[styles.tabToggleButton, !isRecipientSelf && styles.tabToggleButtonActive]}
-                                        onPress={() => setIsRecipientSelf(false)}
-                                        activeOpacity={0.7}
-                                    >
-                                        <Text style={[styles.tabToggleText, !isRecipientSelf && styles.tabToggleTextActive]}>
-                                            👥 Someone Else
-                                        </Text>
-                                    </TouchableOpacity>
-                                </View>
-
-                                {!isRecipientSelf ? (
-                                    <View style={styles.recipientFieldsWrap}>
-                                        <Text style={styles.label}>Recipient's Full Name</Text>
-                                        <TextInput
-                                            style={styles.input}
-                                            placeholder="e.g. Tendai Moyo"
-                                            placeholderTextColor="#94A3B8"
-                                            value={recipientName}
-                                            onChangeText={setRecipientName}
-                                            selectionColor="#055FEE"
-                                        />
-
-                                        <Text style={[styles.label, { marginTop: 12 }]}>Recipient's Phone Number</Text>
-                                        <TextInput
-                                            style={styles.input}
-                                            placeholder="e.g. +263 77 123 4567"
-                                            placeholderTextColor="#94A3B8"
-                                            value={recipientPhone}
-                                            onChangeText={setRecipientPhone}
-                                            keyboardType="phone-pad"
-                                            selectionColor="#055FEE"
-                                        />
-
-                                        <Text style={[styles.label, { marginTop: 12 }]}>Gate / Delivery Instructions</Text>
-                                        <TextInput
-                                            style={[styles.input, { height: 75, textAlignVertical: 'top' }]}
-                                            placeholder="e.g. Gate code #4021, buzz 2B, or call upon arrival"
-                                            placeholderTextColor="#94A3B8"
-                                            value={recipientNotes}
-                                            onChangeText={setRecipientNotes}
-                                            multiline
-                                            selectionColor="#055FEE"
-                                        />
-                                    </View>
-                                ) : (
-                                    <View style={styles.selfRecipientInfo}>
-                                        <Text style={styles.selfRecipientInfoText}>
-                                            ✓ Courier will contact you directly at: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{user?.phone || user?.user_metadata?.phone || 'Your registered account'}</Text>
-                                        </Text>
-                                    </View>
-                                )}
-                            </View>
-                        </BlurView>
-
-                        {/* Opt-in SMS & WhatsApp Alerts Card */}
-                        <BlurView intensity={20} tint="light" style={styles.formCard}>
-                            <View style={styles.formSection}>
-                                <View style={styles.sectionHeader}>
-                                    <Text style={styles.sectionIcon}>📲</Text>
-                                    <Text style={styles.sectionTitle}>Live SMS & WhatsApp Alerts</Text>
-                                </View>
-                                
-                                <View style={styles.smsHeaderRow}>
-                                    <View style={styles.smsPricePill}>
-                                        <Text style={styles.smsPricePillText}>+${smsFee.toFixed(2)} USD</Text>
-                                    </View>
-                                    <Text style={styles.smsTagFreeBadge}>In-App Tracking is 100% FREE</Text>
-                                </View>
-                                
-                                <Text style={styles.smsExplainerText}>
-                                    Push notifications and live map tracking are always free. If your recipient doesn't have the ShipMate app or has mobile data turned off, opt in for automatic SMS and WhatsApp arrival alerts at their gate!
-                                </Text>
-
                                 <TouchableOpacity
-                                    style={[styles.smsToggleCard, enableSmsUpdates && styles.smsToggleCardActive]}
-                                    activeOpacity={0.8}
-                                    onPress={() => setEnableSmsUpdates(!enableSmsUpdates)}
+                                    style={[styles.servicePill, !isDelivery && styles.servicePillActive]}
+                                    onPress={() => setServiceType('errand')}
+                                    activeOpacity={0.7}
                                 >
-                                    <View style={styles.smsToggleRow}>
-                                        <View style={[styles.smsCheckbox, enableSmsUpdates && styles.smsCheckboxActive]}>
-                                            {enableSmsUpdates && <Text style={styles.smsCheckmark}>✓</Text>}
-                                        </View>
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={[styles.smsToggleTitle, enableSmsUpdates && styles.smsToggleTitleActive]}>
-                                                {enableSmsUpdates ? '✓ SMS & WhatsApp Alerts Enabled' : 'Opt In for SMS & WhatsApp Alerts'}
-                                            </Text>
-                                            <Text style={styles.smsToggleDesc}>
-                                                {enableSmsUpdates 
-                                                    ? `Direct telco SMS & WhatsApp alerts will ping the recipient (+ $${smsFee.toFixed(2)})`
-                                                    : `Only +$${smsFee.toFixed(2)} USD added to your delivery total`}
-                                            </Text>
-                                        </View>
-                                    </View>
+                                    <Text style={[styles.servicePillText, !isDelivery && styles.servicePillTextActive]}>
+                                        🛒 Errand
+                                    </Text>
                                 </TouchableOpacity>
-                            </View>
-                        </BlurView>
-
-                        {/* Payment Method Selector Card */}
-                        <BlurView intensity={20} tint="light" style={styles.formCard}>
-                            <View style={styles.formSection}>
-                                <View style={styles.sectionHeader}>
-                                    <Text style={styles.sectionIcon}>💳</Text>
-                                    <Text style={styles.sectionTitle}>Payment Method</Text>
-                                </View>
-                                <Text style={styles.paymentSubTitle}>Choose how you want to settle this delivery</Text>
-
-                                <View style={styles.paymentOptionsGrid}>
-                                    {/* Cash on Delivery */}
-                                    <TouchableOpacity
-                                        style={[styles.paymentOptionCard, paymentMethod === 'cash_on_delivery' && styles.paymentOptionCardActive]}
-                                        activeOpacity={0.7}
-                                        onPress={() => setPaymentMethod('cash_on_delivery')}
-                                    >
-                                        <View style={styles.paymentOptionContent}>
-                                            <Text style={styles.paymentOptionEmoji}>💵</Text>
-                                            <View style={styles.paymentOptionTextWrap}>
-                                                <Text style={[styles.paymentOptionTitle, paymentMethod === 'cash_on_delivery' && styles.paymentOptionTitleActive]}>
-                                                    Cash on Delivery
-                                                </Text>
-                                                <Text style={styles.paymentOptionDesc}>Pay physical USD/ZiG cash directly to courier</Text>
-                                            </View>
-                                            <View style={[styles.paymentRadio, paymentMethod === 'cash_on_delivery' && styles.paymentRadioActive]}>
-                                                {paymentMethod === 'cash_on_delivery' && <View style={styles.paymentRadioDot} />}
-                                            </View>
-                                        </View>
-                                    </TouchableOpacity>
-
-                                    {/* EcoCash Mobile Money */}
-                                    <TouchableOpacity
-                                        style={[styles.paymentOptionCard, paymentMethod === 'ecocash' && styles.paymentOptionCardActive]}
-                                        activeOpacity={0.7}
-                                        onPress={() => setPaymentMethod('ecocash')}
-                                    >
-                                        <View style={styles.paymentOptionContent}>
-                                            <Text style={styles.paymentOptionEmoji}>📱</Text>
-                                            <View style={styles.paymentOptionTextWrap}>
-                                                <Text style={[styles.paymentOptionTitle, paymentMethod === 'ecocash' && styles.paymentOptionTitleActive]}>
-                                                    EcoCash
-                                                </Text>
-                                                <Text style={styles.paymentOptionDesc}>Instant mobile money payment prompt</Text>
-                                            </View>
-                                            <View style={[styles.paymentRadio, paymentMethod === 'ecocash' && styles.paymentRadioActive]}>
-                                                {paymentMethod === 'ecocash' && <View style={styles.paymentRadioDot} />}
-                                            </View>
-                                        </View>
-                                    </TouchableOpacity>
-
-                                    {/* InnBucks */}
-                                    <TouchableOpacity
-                                        style={[styles.paymentOptionCard, paymentMethod === 'innbucks' && styles.paymentOptionCardActive]}
-                                        activeOpacity={0.7}
-                                        onPress={() => setPaymentMethod('innbucks')}
-                                    >
-                                        <View style={styles.paymentOptionContent}>
-                                            <Text style={styles.paymentOptionEmoji}>⚡</Text>
-                                            <View style={styles.paymentOptionTextWrap}>
-                                                <Text style={[styles.paymentOptionTitle, paymentMethod === 'innbucks' && styles.paymentOptionTitleActive]}>
-                                                    InnBucks
-                                                </Text>
-                                                <Text style={styles.paymentOptionDesc}>Direct payment from InnBucks account</Text>
-                                            </View>
-                                            <View style={[styles.paymentRadio, paymentMethod === 'innbucks' && styles.paymentRadioActive]}>
-                                                {paymentMethod === 'innbucks' && <View style={styles.paymentRadioDot} />}
-                                            </View>
-                                        </View>
-                                    </TouchableOpacity>
-
-                                    {/* Card */}
-                                    <TouchableOpacity
-                                        style={[styles.paymentOptionCard, paymentMethod === 'card' && styles.paymentOptionCardActive]}
-                                        activeOpacity={0.7}
-                                        onPress={() => setPaymentMethod('card')}
-                                    >
-                                        <View style={styles.paymentOptionContent}>
-                                            <Text style={styles.paymentOptionEmoji}>💳</Text>
-                                            <View style={styles.paymentOptionTextWrap}>
-                                                <Text style={[styles.paymentOptionTitle, paymentMethod === 'card' && styles.paymentOptionTitleActive]}>
-                                                    Card / Online
-                                                </Text>
-                                                <Text style={styles.paymentOptionDesc}>Pay securely with Visa or Mastercard</Text>
-                                            </View>
-                                            <View style={[styles.paymentRadio, paymentMethod === 'card' && styles.paymentRadioActive]}>
-                                                {paymentMethod === 'card' && <View style={styles.paymentRadioDot} />}
-                                            </View>
-                                        </View>
-                                    </TouchableOpacity>
-                                </View>
-
-                                {/* Mobile Money Phone Input */}
-                                {(paymentMethod === 'ecocash' || paymentMethod === 'innbucks') && (
-                                    <View style={styles.paymentPhoneBox}>
-                                        <Text style={styles.label}>
-                                            {paymentMethod === 'ecocash' ? 'EcoCash Phone Number' : 'InnBucks Registered Mobile'}
-                                        </Text>
-                                        <TextInput
-                                            style={styles.input}
-                                            placeholder="e.g. 0772123456"
-                                            placeholderTextColor="#94A3B8"
-                                            value={paymentPhone}
-                                            onChangeText={setPaymentPhone}
-                                            keyboardType="phone-pad"
-                                            selectionColor="#055FEE"
-                                        />
-                                    </View>
-                                )}
-                            </View>
-                        </BlurView>
-
-                        <View style={styles.summarySection}>
-                            {/* Promo Code Input Section */}
-                            <View style={styles.promoSection}>
-                                <Text style={styles.promoTitle}>🎁 Have a Promo Code?</Text>
-                                <View style={styles.promoRow}>
-                                    <TextInput
-                                        style={styles.promoInput}
-                                        value={promoCodeInput}
-                                        onChangeText={(text) => {
-                                            setPromoCodeInput(text.toUpperCase());
-                                            setPromoMessage(null);
-                                        }}
-                                        placeholder="e.g. WELCOME263"
-                                        placeholderTextColor="#94A3B8"
-                                        autoCapitalize="characters"
-                                        editable={!appliedVoucher}
-                                    />
-                                    {appliedVoucher ? (
-                                        <TouchableOpacity 
-                                            style={styles.promoRemoveBtn} 
-                                            onPress={handleRemovePromo}
-                                        >
-                                            <Text style={styles.promoRemoveBtnText}>Remove</Text>
-                                        </TouchableOpacity>
-                                    ) : (
-                                        <TouchableOpacity 
-                                            style={styles.promoApplyBtn} 
-                                            onPress={handleApplyPromo}
-                                            disabled={validatingPromo}
-                                        >
-                                            {validatingPromo ? (
-                                                <ActivityIndicator size="small" color="#FFFFFF" />
-                                            ) : (
-                                                <Text style={styles.promoApplyBtnText}>Apply</Text>
-                                            )}
-                                        </TouchableOpacity>
-                                    )}
-                                </View>
-
-                                {promoMessage && (
-                                    <Text style={[styles.promoMessageText, promoMessage.isError ? styles.promoErrorText : styles.promoSuccessText]}>
-                                        {promoMessage.text}
-                                    </Text>
-                                )}
-                            </View>
-
-                            <View style={styles.bidDivider} />
-
-                            <View style={styles.summaryRow}>
-                                <Text style={styles.summaryLabel}>Estimated Cost:</Text>
-                                <Text style={styles.summaryTitle}>${estimatedCost.toFixed(2)}</Text>
-                            </View>
-
-                            <View style={styles.bidSection}>
-                                <View style={styles.bidHeaderRow}>
-                                    <Text style={styles.bidLabel}>Your Offer Price ($):</Text>
-                                    <Text style={styles.bidHint}>Adjust to match your budget</Text>
-                                </View>
-                                <View style={styles.bidContainer}>
-                                    <TouchableOpacity 
-                                        style={styles.bidAdjustButton}
-                                        onPress={() => adjustBid(-1.00)}
-                                    >
-                                        <Text style={styles.bidAdjustButtonText}>-</Text>
-                                    </TouchableOpacity>
-                                    
-                                    <TextInput
-                                        style={styles.bidInput}
-                                        value={bidPrice}
-                                        onChangeText={setBidPrice}
-                                        keyboardType="decimal-pad"
-                                        placeholder={estimatedCost.toFixed(2)}
-                                        selectionColor="#055FEE"
-                                    />
-                                    
-                                    <TouchableOpacity 
-                                        style={styles.bidAdjustButton}
-                                        onPress={() => adjustBid(1.00)}
-                                    >
-                                        <Text style={styles.bidAdjustButtonText}>+</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
-
-                            {appliedVoucher && (
-                                <>
-                                    <View style={styles.bidDivider} />
-                                    <View style={styles.summaryRow}>
-                                        <Text style={styles.summaryLabel}>Subtotal Fare:</Text>
-                                        <Text style={styles.summaryText}>${currentFare.toFixed(2)}</Text>
-                                    </View>
-                                    <View style={styles.summaryRow}>
-                                        <Text style={[styles.summaryLabel, { color: '#10B981', fontWeight: '700' }]}>
-                                            Voucher ({appliedVoucher.code}):
-                                        </Text>
-                                        <Text style={[styles.summaryText, { color: '#10B981', fontWeight: '800' }]}>
-                                            -${currentDiscount.toFixed(2)}
-                                        </Text>
-                                    </View>
-                                </>
-                            )}
-
-                            {enableSmsUpdates && (
-                                <>
-                                    {!appliedVoucher && <View style={styles.bidDivider} />}
-                                    <View style={styles.summaryRow}>
-                                        <Text style={[styles.summaryLabel, { color: '#055FEE', fontWeight: '600' }]}>
-                                            📲 SMS & WhatsApp Add-on:
-                                        </Text>
-                                        <Text style={[styles.summaryText, { color: '#055FEE', fontWeight: '700' }]}>
-                                            +${smsFee.toFixed(2)}
-                                        </Text>
-                                    </View>
-                                </>
-                            )}
-
-                            <View style={styles.bidDivider} />
-
-                            <View style={styles.summaryRow}>
-                                <Text style={styles.summaryLabel}>Total to Pay:</Text>
-                                <Text style={[styles.summaryTitle, { color: appliedVoucher ? '#10B981' : '#055FEE' }]}>
-                                    ${currentTotalPayable.toFixed(2)}
-                                </Text>
-                            </View>
-
-                            <View style={styles.summaryRow}>
-                                <Text style={styles.summaryLabel}>Payment Method:</Text>
-                                <Text style={[styles.summaryText, { fontWeight: '700', color: paymentMethod === 'cash_on_delivery' ? '#D97706' : '#055FEE' }]}>
-                                    {paymentMethod === 'cash_on_delivery' 
-                                        ? '💵 Cash on Delivery' 
-                                        : paymentMethod === 'ecocash'
-                                        ? '📱 EcoCash Mobile Money'
-                                        : paymentMethod === 'innbucks'
-                                        ? '⚡ InnBucks Digital'
-                                        : '💳 Card Payment'}
-                                </Text>
-                            </View>
-
-                            {/* Payment Directive Banner for Customer */}
-                            <View style={[styles.customerPaymentBanner, paymentMethod === 'cash_on_delivery' ? styles.customerPaymentBannerCod : styles.customerPaymentBannerDigital]}>
-                                <Text style={styles.customerPaymentBannerIcon}>
-                                    {paymentMethod === 'cash_on_delivery' ? '💵' : '✅'}
-                                </Text>
-                                <View style={styles.customerPaymentBannerTextWrap}>
-                                    <Text style={[styles.customerPaymentBannerTitle, paymentMethod === 'cash_on_delivery' ? styles.customerPaymentBannerTitleCod : styles.customerPaymentBannerTitleDigital]}>
-                                        {paymentMethod === 'cash_on_delivery' ? 'Prepare Cash for Courier' : 'Digital Payment Selected'}
-                                    </Text>
-                                    <Text style={styles.customerPaymentBannerDesc}>
-                                        {paymentMethod === 'cash_on_delivery'
-                                            ? `Please have $${currentTotalPayable.toFixed(2)} USD ready for your courier upon delivery.`
-                                            : 'Payment is processed digitally. Do NOT give physical cash to your courier.'}
-                                    </Text>
-                                </View>
                             </View>
                         </View>
 
-                        {Platform.OS === 'web' && (
-                            <TouchableOpacity
-                                style={styles.mockButton}
+                        {/* Modern Stepper Header */}
+                        <View style={styles.stepperContainer}>
+                            {/* Step 1 */}
+                            <TouchableOpacity 
+                                style={styles.stepItem} 
+                                onPress={() => setCurrentStep(1)}
                                 activeOpacity={0.7}
-                                onPress={handleFillMockData}
                             >
-                                <Text style={styles.mockButtonText}>Fill Mock Data (Testing)</Text>
+                                <View style={[styles.stepCircle, currentStep === 1 ? styles.stepCircleActive : currentStep > 1 ? styles.stepCircleCompleted : styles.stepCircleInactive]}>
+                                    {currentStep > 1 ? (
+                                        <Ionicons name="checkmark" size={16} color="#FFF" />
+                                    ) : (
+                                        <Text style={[styles.stepNumber, currentStep === 1 && styles.stepNumberActive]}>1</Text>
+                                    )}
+                                </View>
+                                <Text style={[styles.stepLabel, currentStep === 1 && styles.stepLabelActive]}>Route</Text>
                             </TouchableOpacity>
-                        )}
 
-                        <TouchableOpacity
-                            style={styles.submitButtonContainer}
-                            activeOpacity={0.8}
-                            onPress={handlePlaceOrder}
-                            disabled={loading}
-                        >
-                            <LinearGradient
-                                colors={['#055FEE', '#5B99F2']}
-                                style={styles.submitGradient}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 0 }}
+                            <View style={[styles.stepLine, currentStep >= 2 && styles.stepLineActive]} />
+
+                            {/* Step 2 */}
+                            <TouchableOpacity 
+                                style={styles.stepItem} 
+                                onPress={() => { if (validateStep1()) setCurrentStep(2); }}
+                                activeOpacity={0.7}
                             >
-                                {loading ? (
-                                    <ActivityIndicator color="#FFFFFF" />
-                                ) : (
-                                    <Text style={styles.submitButtonText}>Confirm & Find your Mate</Text>
-                                )}
-                            </LinearGradient>
-                        </TouchableOpacity>
+                                <View style={[styles.stepCircle, currentStep === 2 ? styles.stepCircleActive : currentStep > 2 ? styles.stepCircleCompleted : styles.stepCircleInactive]}>
+                                    {currentStep > 2 ? (
+                                        <Ionicons name="checkmark" size={16} color="#FFF" />
+                                    ) : (
+                                        <Text style={[styles.stepNumber, currentStep === 2 && styles.stepNumberActive]}>2</Text>
+                                    )}
+                                </View>
+                                <Text style={[styles.stepLabel, currentStep === 2 && styles.stepLabelActive]}>Recipient</Text>
+                            </TouchableOpacity>
 
-                    </ScrollView>
-                </KeyboardAvoidingView>
+                            <View style={[styles.stepLine, currentStep >= 3 && styles.stepLineActive]} />
 
-                {/* Debt Clearance Modal */}
-                <Modal
-                    visible={debtModalVisible}
-                    transparent
-                    animationType="slide"
-                    onRequestClose={() => setDebtModalVisible(false)}
-                >
-                    <View style={styles.debtModalOverlay}>
-                        <View style={styles.debtModalCard}>
-                            <View style={styles.debtModalHeader}>
-                                <Text style={styles.debtModalTitle}>Clear Outstanding Balance</Text>
-                                <TouchableOpacity onPress={() => setDebtModalVisible(false)}>
-                                    <Text style={styles.debtModalClose}>✕</Text>
-                                </TouchableOpacity>
-                            </View>
-
-                            <Text style={styles.debtModalAmount}>
-                                ${unsettledDebt.toFixed(2)} <Text style={styles.debtModalCurrency}>USD</Text>
-                            </Text>
-                            <Text style={styles.debtModalExplainer}>
-                                This fee was incurred from a previous courier cancellation based on distance traveled. Clearing this settles your account immediately.
-                            </Text>
-
-                            <Text style={styles.debtPaymentLabel}>Select Mobile Money Provider:</Text>
-                            <View style={styles.debtPaymentOptions}>
-                                <TouchableOpacity
-                                    style={[styles.debtProviderBtn, debtPaymentMethod === 'ecocash' && styles.debtProviderBtnActive]}
-                                    onPress={() => setDebtPaymentMethod('ecocash')}
-                                >
-                                    <Text style={[styles.debtProviderText, debtPaymentMethod === 'ecocash' && styles.debtProviderTextActive]}>📱 EcoCash</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.debtProviderBtn, debtPaymentMethod === 'innbucks' && styles.debtProviderBtnActive]}
-                                    onPress={() => setDebtPaymentMethod('innbucks')}
-                                >
-                                    <Text style={[styles.debtProviderText, debtPaymentMethod === 'innbucks' && styles.debtProviderTextActive]}>⚡ InnBucks</Text>
-                                </TouchableOpacity>
-                            </View>
-
-                            <Text style={styles.debtPaymentLabel}>Mobile Number:</Text>
-                            <TextInput
-                                style={styles.debtPhoneInput}
-                                placeholder="e.g. 0771234567"
-                                placeholderTextColor="#94A3B8"
-                                value={debtPaymentPhone}
-                                onChangeText={setDebtPaymentPhone}
-                                keyboardType="phone-pad"
-                            />
-
-                            <TouchableOpacity
-                                style={styles.debtSettleBtn}
-                                onPress={handleSettleDebt}
-                                disabled={settlingDebt}
+                            {/* Step 3 */}
+                            <TouchableOpacity 
+                                style={styles.stepItem} 
+                                onPress={() => { if (validateStep1() && validateStep2()) setCurrentStep(3); }}
+                                activeOpacity={0.7}
                             >
-                                {settlingDebt ? (
-                                    <ActivityIndicator color="#FFFFFF" />
-                                ) : (
-                                    <Text style={styles.debtSettleBtnText}>Pay & Clear ${unsettledDebt.toFixed(2)} USD</Text>
-                                )}
+                                <View style={[styles.stepCircle, currentStep === 3 ? styles.stepCircleActive : styles.stepCircleInactive]}>
+                                    <Text style={[styles.stepNumber, currentStep === 3 && styles.stepNumberActive]}>3</Text>
+                                </View>
+                                <Text style={[styles.stepLabel, currentStep === 3 && styles.stepLabelActive]}>Payment</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
-                </Modal>
+
+                    {/* Unsettled Debt Warning Banner */}
+                    {unsettledDebt > 0 && (
+                        <View style={styles.debtBanner}>
+                            <View style={styles.debtBannerTop}>
+                                <Text style={styles.debtBannerIcon}>⚠️</Text>
+                                <View style={styles.debtBannerTextWrap}>
+                                    <Text style={styles.debtBannerTitle}>Unsettled Cancellation Fee (${unsettledDebt.toFixed(2)})</Text>
+                                    <Text style={styles.debtBannerDesc}>
+                                        Outstanding cancellation balance must be cleared before dispatching your Mate.
+                                    </Text>
+                                </View>
+                            </View>
+                            <TouchableOpacity
+                                style={styles.debtBannerActionBtn}
+                                activeOpacity={0.8}
+                                onPress={() => setDebtModalVisible(true)}
+                            >
+                                <Text style={styles.debtBannerActionText}>Clear Balance Now</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+
+                    {/* Main Scrollable Step Form Body */}
+                    <ScrollView 
+                        contentContainerStyle={styles.scrollContent} 
+                        showsVerticalScrollIndicator={false}
+                        keyboardShouldPersistTaps="handled"
+                    >
+                        {/* ========================================================================= */}
+                        {/* STEP 1: ROUTE & PACKAGE DETAILS                                           */}
+                        {/* ========================================================================= */}
+                        {currentStep === 1 && (
+                            <View style={styles.stepFormCard}>
+                                <View style={styles.sectionHeaderRow}>
+                                    <View style={styles.sectionHeaderIcon}>
+                                        <Ionicons name="navigate-circle" size={24} color="#055FEE" />
+                                    </View>
+                                    <View>
+                                        <Text style={styles.sectionTitleText}>Pick Up & Destination</Text>
+                                        <Text style={styles.sectionSubtitleText}>Enter addresses or select on map with suggestions</Text>
+                                    </View>
+                                </View>
+
+                                {isDelivery ? (
+                                    <>
+                                        {/* Pickup Address Input */}
+                                        <View style={styles.inputGroup}>
+                                            <View style={styles.inputLabelRow}>
+                                                <Text style={styles.fieldLabel}>📍 PICKUP POINT</Text>
+                                                {pickupCoords && <Text style={styles.pinnedBadge}>✓ Coordinates Pinned</Text>}
+                                            </View>
+                                            <View style={[styles.addressInputRow, stepErrors.pickup ? styles.inputRowError : null]}>
+                                                <Ionicons name="search" size={18} color="#055FEE" style={{ marginRight: 8 }} />
+                                                <TextInput
+                                                    style={styles.addressInputField}
+                                                    placeholder="Type pickup place (e.g. Joina City, Avondale)"
+                                                    placeholderTextColor="#94A3B8"
+                                                    value={pickupAddress}
+                                                    onChangeText={(t) => handleInlineAddressSearch(t, 'pickup')}
+                                                    onFocus={() => setActiveAddressField('pickup')}
+                                                />
+                                                <TouchableOpacity
+                                                    style={styles.mapPinButton}
+                                                    activeOpacity={0.7}
+                                                    onPress={() => navigation.navigate('MapLocationPicker', { 
+                                                        locationType: 'pickup', 
+                                                        serviceType,
+                                                        initialAddress: pickupAddress 
+                                                    })}
+                                                >
+                                                    <Ionicons name="map" size={16} color="#055FEE" />
+                                                    <Text style={styles.mapPinButtonText}>Map</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                            {stepErrors.pickup && <Text style={styles.fieldErrorText}>{stepErrors.pickup}</Text>}
+
+                                            {/* Pickup Inline Autocomplete Dropdown */}
+                                            {activeAddressField === 'pickup' && inlineSuggestions.length > 0 && (
+                                                <View style={styles.inlineDropdownCard}>
+                                                    {inlineSuggestions.map((s) => (
+                                                        <TouchableOpacity
+                                                            key={s.id}
+                                                            style={styles.inlineSuggestionItem}
+                                                            onPress={() => selectInlineSuggestion(s, 'pickup')}
+                                                        >
+                                                            <Ionicons name="location" size={16} color="#055FEE" style={{ marginRight: 8 }} />
+                                                            <View style={{ flex: 1 }}>
+                                                                <Text style={styles.inlineMainText}>{s.mainText}</Text>
+                                                                <Text style={styles.inlineSubText}>{s.secondaryText}</Text>
+                                                            </View>
+                                                        </TouchableOpacity>
+                                                    ))}
+                                                </View>
+                                            )}
+                                        </View>
+
+                                        {/* Drop-off Address Input */}
+                                        <View style={styles.inputGroup}>
+                                            <View style={styles.inputLabelRow}>
+                                                <Text style={styles.fieldLabel}>🏁 DROP-OFF DESTINATION</Text>
+                                                {dropoffCoords && <Text style={styles.pinnedBadge}>✓ Coordinates Pinned</Text>}
+                                            </View>
+                                            <View style={[styles.addressInputRow, stepErrors.dropoff ? styles.inputRowError : null]}>
+                                                <Ionicons name="search" size={18} color="#10B981" style={{ marginRight: 8 }} />
+                                                <TextInput
+                                                    style={styles.addressInputField}
+                                                    placeholder="Type destination (e.g. Sam Levy's Village)"
+                                                    placeholderTextColor="#94A3B8"
+                                                    value={dropoffAddress}
+                                                    onChangeText={(t) => handleInlineAddressSearch(t, 'dropoff')}
+                                                    onFocus={() => setActiveAddressField('dropoff')}
+                                                />
+                                                <TouchableOpacity
+                                                    style={styles.mapPinButton}
+                                                    activeOpacity={0.7}
+                                                    onPress={() => navigation.navigate('MapLocationPicker', { 
+                                                        locationType: 'dropoff', 
+                                                        serviceType,
+                                                        initialAddress: dropoffAddress 
+                                                    })}
+                                                >
+                                                    <Ionicons name="map" size={16} color="#055FEE" />
+                                                    <Text style={styles.mapPinButtonText}>Map</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                            {stepErrors.dropoff && <Text style={styles.fieldErrorText}>{stepErrors.dropoff}</Text>}
+
+                                            {/* Dropoff Inline Autocomplete Dropdown */}
+                                            {activeAddressField === 'dropoff' && inlineSuggestions.length > 0 && (
+                                                <View style={styles.inlineDropdownCard}>
+                                                    {inlineSuggestions.map((s) => (
+                                                        <TouchableOpacity
+                                                            key={s.id}
+                                                            style={styles.inlineSuggestionItem}
+                                                            onPress={() => selectInlineSuggestion(s, 'dropoff')}
+                                                        >
+                                                            <Ionicons name="location" size={16} color="#10B981" style={{ marginRight: 8 }} />
+                                                            <View style={{ flex: 1 }}>
+                                                                <Text style={styles.inlineMainText}>{s.mainText}</Text>
+                                                                <Text style={styles.inlineSubText}>{s.secondaryText}</Text>
+                                                            </View>
+                                                        </TouchableOpacity>
+                                                    ))}
+                                                </View>
+                                            )}
+                                        </View>
+
+                                        {/* Package Description & Vision AI Scan */}
+                                        <View style={styles.packageCard}>
+                                            <View style={styles.packageHeaderRow}>
+                                                <Text style={styles.fieldLabel}>📦 PACKAGE DESCRIPTION</Text>
+                                                <TouchableOpacity 
+                                                    style={styles.aiScanMiniBtn}
+                                                    onPress={handleScanPackage}
+                                                    disabled={isScanning}
+                                                    activeOpacity={0.7}
+                                                >
+                                                    <Ionicons name="scan" size={14} color="#055FEE" />
+                                                    <Text style={styles.aiScanMiniBtnText}>Vision AI Scan</Text>
+                                                </TouchableOpacity>
+                                            </View>
+
+                                            <TextInput
+                                                style={styles.packageTextInput}
+                                                placeholder="Describe package (e.g. Small box, legal documents, electronics)"
+                                                placeholderTextColor="#94A3B8"
+                                                value={packageDescription}
+                                                onChangeText={setPackageDesc}
+                                                multiline
+                                            />
+
+                                            {isScanning && (
+                                                <View style={styles.scanningBox}>
+                                                    <ActivityIndicator size="small" color="#055FEE" />
+                                                    <Text style={styles.scanningLabel}>Gemini AI analyzing dimensions & size...</Text>
+                                                </View>
+                                            )}
+
+                                            {packageImage && !isScanning && (
+                                                <View style={styles.packagePreviewRow}>
+                                                    <Image source={{ uri: packageImage }} style={styles.packageThumb} />
+                                                    <View style={styles.aiResultPill}>
+                                                        <Text style={styles.aiResultTag}>AI SIZE ESTIMATE</Text>
+                                                        <Text style={styles.aiResultValue}>{aiEstimate || 'Standard Package'}</Text>
+                                                    </View>
+                                                </View>
+                                            )}
+                                        </View>
+                                    </>
+                                ) : (
+                                    /* ERRAND MODE */
+                                    <>
+                                        {/* Store / Errand Location */}
+                                        <View style={styles.inputGroup}>
+                                            <View style={styles.inputLabelRow}>
+                                                <Text style={styles.fieldLabel}>🛒 STORE / ERRAND LOCATION</Text>
+                                                {errandCoords && <Text style={styles.pinnedBadge}>✓ Coordinates Pinned</Text>}
+                                            </View>
+                                            <View style={[styles.addressInputRow, stepErrors.errand ? styles.inputRowError : null]}>
+                                                <Ionicons name="basket" size={18} color="#055FEE" style={{ marginRight: 8 }} />
+                                                <TextInput
+                                                    style={styles.addressInputField}
+                                                    placeholder="Store name or location (e.g. Avondale Spar)"
+                                                    placeholderTextColor="#94A3B8"
+                                                    value={errandLocation}
+                                                    onChangeText={(t) => handleInlineAddressSearch(t, 'errand')}
+                                                    onFocus={() => setActiveAddressField('errand')}
+                                                />
+                                                <TouchableOpacity
+                                                    style={styles.mapPinButton}
+                                                    activeOpacity={0.7}
+                                                    onPress={() => navigation.navigate('MapLocationPicker', { 
+                                                        locationType: 'store', 
+                                                        serviceType,
+                                                        initialAddress: errandLocation 
+                                                    })}
+                                                >
+                                                    <Ionicons name="map" size={16} color="#055FEE" />
+                                                    <Text style={styles.mapPinButtonText}>Map</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                            {stepErrors.errand && <Text style={styles.fieldErrorText}>{stepErrors.errand}</Text>}
+
+                                            {/* Store Inline Dropdown */}
+                                            {activeAddressField === 'errand' && inlineSuggestions.length > 0 && (
+                                                <View style={styles.inlineDropdownCard}>
+                                                    {inlineSuggestions.map((s) => (
+                                                        <TouchableOpacity
+                                                            key={s.id}
+                                                            style={styles.inlineSuggestionItem}
+                                                            onPress={() => selectInlineSuggestion(s, 'errand')}
+                                                        >
+                                                            <Ionicons name="business" size={16} color="#055FEE" style={{ marginRight: 8 }} />
+                                                            <View style={{ flex: 1 }}>
+                                                                <Text style={styles.inlineMainText}>{s.mainText}</Text>
+                                                                <Text style={styles.inlineSubText}>{s.secondaryText}</Text>
+                                                            </View>
+                                                        </TouchableOpacity>
+                                                    ))}
+                                                </View>
+                                            )}
+                                        </View>
+
+                                        {/* Drop-off Delivery Address */}
+                                        <View style={styles.inputGroup}>
+                                            <View style={styles.inputLabelRow}>
+                                                <Text style={styles.fieldLabel}>🏁 YOUR DELIVERY ADDRESS</Text>
+                                                {dropoffCoords && <Text style={styles.pinnedBadge}>✓ Coordinates Pinned</Text>}
+                                            </View>
+                                            <View style={[styles.addressInputRow, stepErrors.dropoff ? styles.inputRowError : null]}>
+                                                <Ionicons name="home" size={18} color="#10B981" style={{ marginRight: 8 }} />
+                                                <TextInput
+                                                    style={styles.addressInputField}
+                                                    placeholder="Where should courier bring your items?"
+                                                    placeholderTextColor="#94A3B8"
+                                                    value={dropoffAddress}
+                                                    onChangeText={(t) => handleInlineAddressSearch(t, 'dropoff')}
+                                                    onFocus={() => setActiveAddressField('dropoff')}
+                                                />
+                                                <TouchableOpacity
+                                                    style={styles.mapPinButton}
+                                                    activeOpacity={0.7}
+                                                    onPress={() => navigation.navigate('MapLocationPicker', { 
+                                                        locationType: 'dropoff', 
+                                                        serviceType,
+                                                        initialAddress: dropoffAddress 
+                                                    })}
+                                                >
+                                                    <Ionicons name="map" size={16} color="#055FEE" />
+                                                    <Text style={styles.mapPinButtonText}>Map</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                            {stepErrors.dropoff && <Text style={styles.fieldErrorText}>{stepErrors.dropoff}</Text>}
+                                        </View>
+
+                                        {/* Shopping List & Smart AI Chips */}
+                                        <View style={styles.packageCard}>
+                                            <Text style={styles.fieldLabel}>📝 SHOPPING LIST / INSTRUCTIONS</Text>
+                                            
+                                            {errandSuggestions.length > 0 && (
+                                                <View style={styles.chipsWrap}>
+                                                    <Text style={styles.chipsTitle}>Smart Suggestions:</Text>
+                                                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsScroll}>
+                                                        {errandSuggestions.map((item, idx) => (
+                                                            <TouchableOpacity 
+                                                                key={idx} 
+                                                                style={styles.suggestionChip}
+                                                                onPress={() => addSuggestionToErrand(item)}
+                                                            >
+                                                                <Text style={styles.suggestionChipText}>+ {item}</Text>
+                                                            </TouchableOpacity>
+                                                        ))}
+                                                    </ScrollView>
+                                                </View>
+                                            )}
+
+                                            <TextInput
+                                                style={styles.packageTextInput}
+                                                placeholder="What should courier purchase or pick up?"
+                                                placeholderTextColor="#94A3B8"
+                                                value={errandList}
+                                                onChangeText={setErrandInstructions}
+                                                multiline
+                                            />
+                                        </View>
+                                    </>
+                                )}
+                            </View>
+                        )}
+
+                        {/* ========================================================================= */}
+                        {/* STEP 2: RECIPIENT & NOTIFICATION SETTINGS                                 */}
+                        {/* ========================================================================= */}
+                        {currentStep === 2 && (
+                            <View style={styles.stepFormCard}>
+                                <View style={styles.sectionHeaderRow}>
+                                    <View style={styles.sectionHeaderIcon}>
+                                        <Ionicons name="person-circle" size={24} color="#055FEE" />
+                                    </View>
+                                    <View>
+                                        <Text style={styles.sectionTitleText}>Recipient & Contact</Text>
+                                        <Text style={styles.sectionSubtitleText}>Specify who receives the package upon arrival</Text>
+                                    </View>
+                                </View>
+
+                                {/* Self vs Someone Else Selector */}
+                                <View style={styles.recipientToggleRow}>
+                                    <TouchableOpacity
+                                        style={[styles.recipientToggleBtn, isRecipientSelf && styles.recipientToggleBtnActive]}
+                                        onPress={() => setIsRecipientSelf(true)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons name="person" size={16} color={isRecipientSelf ? '#055FEE' : '#64748B'} style={{ marginRight: 6 }} />
+                                        <Text style={[styles.recipientToggleText, isRecipientSelf && styles.recipientToggleTextActive]}>
+                                            I'll Receive It
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.recipientToggleBtn, !isRecipientSelf && styles.recipientToggleBtnActive]}
+                                        onPress={() => setIsRecipientSelf(false)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons name="people" size={16} color={!isRecipientSelf ? '#055FEE' : '#64748B'} style={{ marginRight: 6 }} />
+                                        <Text style={[styles.recipientToggleText, !isRecipientSelf && styles.recipientToggleTextActive]}>
+                                            Someone Else
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                {isRecipientSelf ? (
+                                    <View style={styles.selfContactCard}>
+                                        <Ionicons name="checkmark-circle" size={20} color="#10B981" style={{ marginRight: 10 }} />
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={styles.selfContactTitle}>Direct Customer Delivery</Text>
+                                            <Text style={styles.selfContactDesc}>
+                                                Courier will call you directly at: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{user?.phone || user?.user_metadata?.phone || 'Your account phone'}</Text>
+                                            </Text>
+                                        </View>
+                                    </View>
+                                ) : (
+                                    <View style={styles.otherRecipientBox}>
+                                        <View style={styles.inputGroup}>
+                                            <Text style={styles.fieldLabel}>RECIPIENT FULL NAME *</Text>
+                                            <TextInput
+                                                style={[styles.textInput, stepErrors.recipientName ? styles.inputError : null]}
+                                                placeholder="e.g. Tendai Moyo"
+                                                placeholderTextColor="#94A3B8"
+                                                value={recipientName}
+                                                onChangeText={setRecipientName}
+                                            />
+                                            {stepErrors.recipientName && <Text style={styles.fieldErrorText}>{stepErrors.recipientName}</Text>}
+                                        </View>
+
+                                        <View style={styles.inputGroup}>
+                                            <Text style={styles.fieldLabel}>RECIPIENT MOBILE NUMBER *</Text>
+                                            <TextInput
+                                                style={[styles.textInput, stepErrors.recipientPhone ? styles.inputError : null]}
+                                                placeholder="e.g. +263 77 123 4567"
+                                                placeholderTextColor="#94A3B8"
+                                                value={recipientPhone}
+                                                onChangeText={setRecipientPhone}
+                                                keyboardType="phone-pad"
+                                            />
+                                            {stepErrors.recipientPhone && <Text style={styles.fieldErrorText}>{stepErrors.recipientPhone}</Text>}
+                                        </View>
+
+                                        <View style={styles.inputGroup}>
+                                            <Text style={styles.fieldLabel}>GATE / SECURITY INSTRUCTIONS</Text>
+                                            <TextInput
+                                                style={[styles.textInput, { height: 70, textAlignVertical: 'top' }]}
+                                                placeholder="e.g. Gate code #4021, buzz Flat 2B, or call upon arrival"
+                                                placeholderTextColor="#94A3B8"
+                                                value={recipientNotes}
+                                                onChangeText={setRecipientNotes}
+                                                multiline
+                                            />
+                                        </View>
+                                    </View>
+                                )}
+
+                                {/* SMS & WhatsApp Alerts Option */}
+                                <View style={styles.smsAlertsSection}>
+                                    <View style={styles.smsHeader}>
+                                        <View style={styles.smsHeaderLeft}>
+                                            <Ionicons name="chatbubbles" size={20} color="#055FEE" style={{ marginRight: 8 }} />
+                                            <Text style={styles.smsTitle}>Live SMS & WhatsApp Alerts</Text>
+                                        </View>
+                                        <View style={styles.smsFeeBadge}>
+                                            <Text style={styles.smsFeeText}>+${smsFee.toFixed(2)} USD</Text>
+                                        </View>
+                                    </View>
+                                    <Text style={styles.smsDesc}>
+                                        Sends direct SMS & WhatsApp milestone arrival pings to the recipient when courier is approaching their gate.
+                                    </Text>
+                                    
+                                    <TouchableOpacity
+                                        style={[styles.smsOptionCard, enableSmsUpdates && styles.smsOptionCardActive]}
+                                        onPress={() => setEnableSmsUpdates(!enableSmsUpdates)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <View style={[styles.checkboxCircle, enableSmsUpdates && styles.checkboxCircleActive]}>
+                                            {enableSmsUpdates && <Ionicons name="checkmark" size={14} color="#FFF" />}
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={[styles.smsOptionTitle, enableSmsUpdates && styles.smsOptionTitleActive]}>
+                                                {enableSmsUpdates ? '✓ SMS & WhatsApp Alerts Enabled' : 'Enable Gate Arrival Alerts'}
+                                            </Text>
+                                            <Text style={styles.smsOptionSub}>
+                                                {enableSmsUpdates ? `Added to your delivery total (+$${smsFee.toFixed(2)})` : `In-app tracking is always 100% free`}
+                                            </Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        )}
+
+                        {/* ========================================================================= */}
+                        {/* STEP 3: PAYMENT & FARE REVIEW                                             */}
+                        {/* ========================================================================= */}
+                        {currentStep === 3 && (
+                            <View style={styles.stepFormCard}>
+                                <View style={styles.sectionHeaderRow}>
+                                    <View style={styles.sectionHeaderIcon}>
+                                        <Ionicons name="card" size={24} color="#055FEE" />
+                                    </View>
+                                    <View>
+                                        <Text style={styles.sectionTitleText}>Payment & Fare</Text>
+                                        <Text style={styles.sectionSubtitleText}>Review fare, adjust offer and select payment method</Text>
+                                    </View>
+                                </View>
+
+                                {/* Custom Offer Price / Bid */}
+                                <View style={styles.bidCard}>
+                                    <View style={styles.bidHeader}>
+                                        <Text style={styles.fieldLabel}>YOUR OFFER PRICE (USD)</Text>
+                                        <Text style={styles.bidHint}>Estimated: ${estimatedCost.toFixed(2)}</Text>
+                                    </View>
+                                    <View style={styles.bidControlsRow}>
+                                        <TouchableOpacity 
+                                            style={styles.bidAdjustBtn} 
+                                            onPress={() => adjustBid(-1.00)}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Ionicons name="remove" size={20} color="#0F172A" />
+                                        </TouchableOpacity>
+                                        <View style={styles.bidDisplayWrap}>
+                                            <Text style={styles.currencyPrefix}>$</Text>
+                                            <TextInput
+                                                style={styles.bidAmountInput}
+                                                value={bidPrice}
+                                                onChangeText={setBidPrice}
+                                                keyboardType="decimal-pad"
+                                                selectTextOnFocus
+                                            />
+                                        </View>
+                                        <TouchableOpacity 
+                                            style={styles.bidAdjustBtn} 
+                                            onPress={() => adjustBid(1.00)}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Ionicons name="add" size={20} color="#0F172A" />
+                                        </TouchableOpacity>
+                                    </View>
+                                    <Text style={styles.bidNote}>Mates accept competitive offers faster!</Text>
+                                </View>
+
+                                {/* Voucher / Promo Code Input */}
+                                <View style={styles.promoBox}>
+                                    <View style={styles.promoInputRow}>
+                                        <Ionicons name="pricetag" size={16} color="#055FEE" style={{ marginRight: 8 }} />
+                                        <TextInput
+                                            style={styles.promoInputField}
+                                            placeholder="Promo code (e.g. WELCOME263)"
+                                            placeholderTextColor="#94A3B8"
+                                            value={promoCodeInput}
+                                            onChangeText={(t) => { setPromoCodeInput(t.toUpperCase()); setPromoMessage(null); }}
+                                            editable={!appliedVoucher}
+                                            autoCapitalize="characters"
+                                        />
+                                        {appliedVoucher ? (
+                                            <TouchableOpacity style={styles.promoRemoveButton} onPress={handleRemovePromo}>
+                                                <Text style={styles.promoRemoveText}>Remove</Text>
+                                            </TouchableOpacity>
+                                        ) : (
+                                            <TouchableOpacity 
+                                                style={styles.promoApplyButton} 
+                                                onPress={handleApplyPromo}
+                                                disabled={validatingPromo}
+                                            >
+                                                {validatingPromo ? (
+                                                    <ActivityIndicator size="small" color="#FFF" />
+                                                ) : (
+                                                    <Text style={styles.promoApplyText}>Apply</Text>
+                                                )}
+                                            </TouchableOpacity>
+                                        )}
+                                    </View>
+                                    {promoMessage && (
+                                        <Text style={[styles.promoFeedback, promoMessage.isError ? styles.promoFeedbackError : styles.promoFeedbackSuccess]}>
+                                            {promoMessage.text}
+                                        </Text>
+                                    )}
+                                </View>
+
+                                {/* Payment Method Selection */}
+                                <View style={styles.paymentSection}>
+                                    <Text style={styles.fieldLabel}>SELECT PAYMENT METHOD</Text>
+                                    <View style={styles.paymentMethodsGrid}>
+                                        {/* Cash on Delivery */}
+                                        <TouchableOpacity
+                                            style={[styles.paymentMethodCard, paymentMethod === 'cash_on_delivery' && styles.paymentMethodCardActive]}
+                                            onPress={() => setPaymentMethod('cash_on_delivery')}
+                                            activeOpacity={0.8}
+                                        >
+                                            <Text style={styles.paymentMethodIcon}>💵</Text>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={[styles.paymentMethodTitle, paymentMethod === 'cash_on_delivery' && styles.paymentMethodTitleActive]}>
+                                                    Cash on Delivery
+                                                </Text>
+                                                <Text style={styles.paymentMethodSubtitle}>Pay cash USD / ZiG to courier</Text>
+                                            </View>
+                                            <View style={[styles.radioCircle, paymentMethod === 'cash_on_delivery' && styles.radioCircleActive]}>
+                                                {paymentMethod === 'cash_on_delivery' && <View style={styles.radioDot} />}
+                                            </View>
+                                        </TouchableOpacity>
+
+                                        {/* EcoCash */}
+                                        <TouchableOpacity
+                                            style={[styles.paymentMethodCard, paymentMethod === 'ecocash' && styles.paymentMethodCardActive]}
+                                            onPress={() => setPaymentMethod('ecocash')}
+                                            activeOpacity={0.8}
+                                        >
+                                            <Text style={styles.paymentMethodIcon}>📱</Text>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={[styles.paymentMethodTitle, paymentMethod === 'ecocash' && styles.paymentMethodTitleActive]}>
+                                                    EcoCash Mobile Money
+                                                </Text>
+                                                <Text style={styles.paymentMethodSubtitle}>Instant USSD push prompt</Text>
+                                            </View>
+                                            <View style={[styles.radioCircle, paymentMethod === 'ecocash' && styles.radioCircleActive]}>
+                                                {paymentMethod === 'ecocash' && <View style={styles.radioDot} />}
+                                            </View>
+                                        </TouchableOpacity>
+
+                                        {/* InnBucks */}
+                                        <TouchableOpacity
+                                            style={[styles.paymentMethodCard, paymentMethod === 'innbucks' && styles.paymentMethodCardActive]}
+                                            onPress={() => setPaymentMethod('innbucks')}
+                                            activeOpacity={0.8}
+                                        >
+                                            <Text style={styles.paymentMethodIcon}>⚡</Text>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={[styles.paymentMethodTitle, paymentMethod === 'innbucks' && styles.paymentMethodTitleActive]}>
+                                                    InnBucks Digital
+                                                </Text>
+                                                <Text style={styles.paymentMethodSubtitle}>Pay via registered InnBucks number</Text>
+                                            </View>
+                                            <View style={[styles.radioCircle, paymentMethod === 'innbucks' && styles.radioCircleActive]}>
+                                                {paymentMethod === 'innbucks' && <View style={styles.radioDot} />}
+                                            </View>
+                                        </TouchableOpacity>
+                                    </View>
+
+                                    {/* Mobile Number Prompt for Digital Payments */}
+                                    {(paymentMethod === 'ecocash' || paymentMethod === 'innbucks') && (
+                                        <View style={styles.digitalPhonePrompt}>
+                                            <Text style={styles.fieldLabel}>
+                                                {paymentMethod === 'ecocash' ? 'ECOCASH NUMBER *' : 'INNBUCKS REGISTERED MOBILE *'}
+                                            </Text>
+                                            <TextInput
+                                                style={styles.textInput}
+                                                placeholder="e.g. 0772123456"
+                                                placeholderTextColor="#94A3B8"
+                                                value={paymentPhone}
+                                                onChangeText={setPaymentPhone}
+                                                keyboardType="phone-pad"
+                                            />
+                                        </View>
+                                    )}
+                                </View>
+
+                                {/* Cost Breakdown Summary */}
+                                <View style={styles.breakdownCard}>
+                                    <View style={styles.breakdownRow}>
+                                        <Text style={styles.breakdownLabel}>Subtotal Fare</Text>
+                                        <Text style={styles.breakdownValue}>${currentFare.toFixed(2)}</Text>
+                                    </View>
+                                    {appliedVoucher && (
+                                        <View style={styles.breakdownRow}>
+                                            <Text style={[styles.breakdownLabel, { color: '#10B981', fontWeight: '700' }]}>
+                                                Promo ({appliedVoucher.code})
+                                            </Text>
+                                            <Text style={[styles.breakdownValue, { color: '#10B981', fontWeight: '800' }]}>
+                                                -${currentDiscount.toFixed(2)}
+                                            </Text>
+                                        </View>
+                                    )}
+                                    {enableSmsUpdates && (
+                                        <View style={styles.breakdownRow}>
+                                            <Text style={styles.breakdownLabel}>SMS Arrival Alerts</Text>
+                                            <Text style={styles.breakdownValue}>+${smsFee.toFixed(2)}</Text>
+                                        </View>
+                                    )}
+                                    <View style={styles.breakdownDivider} />
+                                    <View style={styles.breakdownRow}>
+                                        <Text style={styles.breakdownTotalLabel}>Total to Pay</Text>
+                                        <Text style={styles.breakdownTotalValue}>${currentTotalPayable.toFixed(2)} USD</Text>
+                                    </View>
+                                </View>
+                            </View>
+                        )}
+
+                        {/* Web Testing Helper Button */}
+                        {Platform.OS === 'web' && (
+                            <TouchableOpacity style={styles.mockBtn} onPress={handleFillMockData} activeOpacity={0.7}>
+                                <Text style={styles.mockBtnText}>🧪 Auto-Fill Demo Data (Testing)</Text>
+                            </TouchableOpacity>
+                        )}
+
+                    </ScrollView>
+
+                    {/* ========================================================================= */}
+                    {/* STICKY BOTTOM ACTION BAR                                                  */}
+                    {/* ========================================================================= */}
+                    <View style={styles.bottomBar}>
+                        <View style={styles.bottomBarFarePreview}>
+                            <Text style={styles.bottomFareLabel}>Total Fare</Text>
+                            <Text style={styles.bottomFareValue}>${currentTotalPayable.toFixed(2)}</Text>
+                        </View>
+
+                        <View style={styles.bottomBarButtonsRow}>
+                            {currentStep > 1 && (
+                                <TouchableOpacity 
+                                    style={styles.backButton} 
+                                    onPress={handlePrevStep}
+                                    activeOpacity={0.8}
+                                >
+                                    <Ionicons name="arrow-back" size={20} color="#0F172A" />
+                                </TouchableOpacity>
+                            )}
+
+                            {currentStep < 3 ? (
+                                <TouchableOpacity 
+                                    style={styles.nextButton} 
+                                    onPress={handleNextStep}
+                                    activeOpacity={0.85}
+                                >
+                                    <LinearGradient colors={['#055FEE', '#2563EB']} style={styles.nextGradient}>
+                                        <Text style={styles.nextButtonText}>
+                                            {currentStep === 1 ? 'Continue to Recipient →' : 'Continue to Payment →'}
+                                        </Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            ) : (
+                                <TouchableOpacity 
+                                    style={styles.confirmButton} 
+                                    onPress={handlePlaceOrder}
+                                    disabled={loading}
+                                    activeOpacity={0.85}
+                                >
+                                    <LinearGradient colors={['#10B981', '#059669']} style={styles.nextGradient}>
+                                        {loading ? (
+                                            <ActivityIndicator color="#FFF" />
+                                        ) : (
+                                            <>
+                                                <Ionicons name="rocket" size={18} color="#FFF" style={{ marginRight: 6 }} />
+                                                <Text style={styles.nextButtonText}>Confirm & Find Mate</Text>
+                                            </>
+                                        )}
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </View>
+
+                    {/* Cancellation Debt Clearance Modal */}
+                    <Modal
+                        visible={debtModalVisible}
+                        transparent
+                        animationType="slide"
+                        onRequestClose={() => setDebtModalVisible(false)}
+                    >
+                        <View style={styles.debtModalOverlay}>
+                            <View style={styles.debtModalCard}>
+                                <View style={styles.debtModalHeader}>
+                                    <Text style={styles.debtModalTitle}>Clear Outstanding Balance</Text>
+                                    <TouchableOpacity onPress={() => setDebtModalVisible(false)}>
+                                        <Ionicons name="close-circle" size={24} color="#94A3B8" />
+                                    </TouchableOpacity>
+                                </View>
+
+                                <Text style={styles.debtModalAmount}>
+                                    ${unsettledDebt.toFixed(2)} <Text style={styles.debtModalCurrency}>USD</Text>
+                                </Text>
+                                <Text style={styles.debtModalExplainer}>
+                                    Incurred from a previous courier cancellation based on distance traveled. Clearing this settles your account immediately.
+                                </Text>
+
+                                <Text style={styles.fieldLabel}>Select Payment Method:</Text>
+                                <View style={styles.debtPaymentOptions}>
+                                    <TouchableOpacity
+                                        style={[styles.debtProviderBtn, debtPaymentMethod === 'ecocash' && styles.debtProviderBtnActive]}
+                                        onPress={() => setDebtPaymentMethod('ecocash')}
+                                    >
+                                        <Text style={[styles.debtProviderText, debtPaymentMethod === 'ecocash' && styles.debtProviderTextActive]}>
+                                            📱 EcoCash
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.debtProviderBtn, debtPaymentMethod === 'innbucks' && styles.debtProviderBtnActive]}
+                                        onPress={() => setDebtPaymentMethod('innbucks')}
+                                    >
+                                        <Text style={[styles.debtProviderText, debtPaymentMethod === 'innbucks' && styles.debtProviderTextActive]}>
+                                            ⚡ InnBucks
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+
+                                <Text style={styles.fieldLabel}>Mobile Number:</Text>
+                                <TextInput
+                                    style={styles.textInput}
+                                    placeholder="e.g. 0771234567"
+                                    placeholderTextColor="#94A3B8"
+                                    value={debtPaymentPhone}
+                                    onChangeText={setDebtPaymentPhone}
+                                    keyboardType="phone-pad"
+                                />
+
+                                <TouchableOpacity
+                                    style={styles.debtSettleBtn}
+                                    onPress={handleSettleDebt}
+                                    disabled={settlingDebt}
+                                >
+                                    {settlingDebt ? (
+                                        <ActivityIndicator color="#FFFFFF" />
+                                    ) : (
+                                        <Text style={styles.debtSettleBtnText}>Pay & Clear ${unsettledDebt.toFixed(2)} USD</Text>
+                                    )}
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </Modal>
+
+                </KeyboardAvoidingView>
             </SafeAreaView>
         </LinearGradient>
     );
 };
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
+    container: { flex: 1 },
+    safeArea: { flex: 1 },
+    keyboardView: { flex: 1 },
+    topHeader: {
+        backgroundColor: '#FFFFFF',
+        paddingHorizontal: 20,
+        paddingTop: Platform.OS === 'android' ? 36 : 14,
+        paddingBottom: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E2E8F0',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 3,
     },
-    safeArea: {
-        flex: 1,
+    headerTitleRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 16,
     },
-    keyboardView: {
-        flex: 1,
-    },
-    scrollContent: {
-        paddingHorizontal: 24,
-        paddingTop: Platform.OS === 'android' ? 40 : 20,
-        paddingBottom: 40,
-    },
-    headerContainer: {
-        marginBottom: 24,
-    },
-    header: {
-        fontSize: 32,
+    screenTitle: {
+        fontSize: 22,
         fontWeight: '800',
         color: '#0F172A',
-        letterSpacing: -0.5,
+        letterSpacing: -0.4,
+    },
+    screenSubTitle: {
+        fontSize: 12,
+        color: '#64748B',
+        fontWeight: '500',
+        marginTop: 2,
+    },
+    servicePillContainer: {
+        flexDirection: 'row',
+        backgroundColor: '#F1F5F9',
+        borderRadius: 20,
+        padding: 3,
+    },
+    servicePill: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 16,
+    },
+    servicePillActive: {
+        backgroundColor: '#FFFFFF',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 1,
+    },
+    servicePillText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#64748B',
+    },
+    servicePillTextActive: {
+        color: '#055FEE',
+        fontWeight: '700',
+    },
+    stepperContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 12,
+    },
+    stepItem: {
+        alignItems: 'center',
+    },
+    stepCircle: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
         marginBottom: 4,
     },
-    subHeader: {
-        fontSize: 16,
+    stepCircleActive: {
+        backgroundColor: '#055FEE',
+        shadowColor: '#055FEE',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.35,
+        shadowRadius: 5,
+        elevation: 4,
+    },
+    stepCircleCompleted: {
+        backgroundColor: '#10B981',
+    },
+    stepCircleInactive: {
+        backgroundColor: '#E2E8F0',
+    },
+    stepNumber: {
+        fontSize: 13,
+        fontWeight: '700',
         color: '#64748B',
+    },
+    stepNumberActive: {
+        color: '#FFFFFF',
+    },
+    stepLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#94A3B8',
+    },
+    stepLabelActive: {
+        color: '#055FEE',
+        fontWeight: '700',
+    },
+    stepLine: {
+        flex: 1,
+        height: 2,
+        backgroundColor: '#E2E8F0',
+        marginHorizontal: 8,
+        marginBottom: 16,
+    },
+    stepLineActive: {
+        backgroundColor: '#10B981',
+    },
+    scrollContent: {
+        padding: 16,
+        paddingBottom: 110,
+    },
+    stepFormCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        padding: 18,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+        elevation: 2,
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
+    },
+    sectionHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 18,
+    },
+    sectionHeaderIcon: {
+        marginRight: 12,
+    },
+    sectionTitleText: {
+        fontSize: 16,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    sectionSubtitleText: {
+        fontSize: 12,
+        color: '#64748B',
+        marginTop: 2,
+    },
+    inputGroup: {
+        marginBottom: 16,
+    },
+    inputLabelRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    fieldLabel: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#475569',
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+    },
+    pinnedBadge: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#10B981',
+        backgroundColor: '#D1FAE5',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 6,
+    },
+    addressInputRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F8FAFC',
+        borderRadius: 14,
+        paddingHorizontal: 12,
+        height: 50,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    inputRowError: {
+        borderColor: '#EF4444',
+        backgroundColor: '#FEF2F2',
+    },
+    addressInputField: {
+        flex: 1,
+        fontSize: 14,
+        color: '#0F172A',
+        fontWeight: '500',
+    },
+    mapPinButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#EFF6FF',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 10,
+        gap: 4,
+        borderWidth: 1,
+        borderColor: '#BFDBFE',
+    },
+    mapPinButtonText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#055FEE',
+    },
+    inlineDropdownCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        marginTop: 6,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 5,
+        maxHeight: 180,
+    },
+    inlineSuggestionItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F8FAFC',
+    },
+    inlineMainText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#0F172A',
+    },
+    inlineSubText: {
+        fontSize: 11,
+        color: '#64748B',
+    },
+    fieldErrorText: {
+        fontSize: 11,
+        color: '#EF4444',
+        marginTop: 4,
+        fontWeight: '600',
+    },
+    packageCard: {
+        backgroundColor: '#F8FAFC',
+        borderRadius: 16,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        marginTop: 4,
+    },
+    packageHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    aiScanMiniBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#EFF6FF',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 8,
+        gap: 4,
+        borderWidth: 1,
+        borderColor: '#BFDBFE',
+    },
+    aiScanMiniBtnText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#055FEE',
+    },
+    packageTextInput: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        padding: 12,
+        fontSize: 14,
+        color: '#0F172A',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        minHeight: 65,
+        textAlignVertical: 'top',
+    },
+    scanningBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 10,
+        gap: 8,
+    },
+    scanningLabel: {
+        fontSize: 12,
+        color: '#055FEE',
+        fontWeight: '600',
+    },
+    packagePreviewRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 12,
+        gap: 12,
+    },
+    packageThumb: {
+        width: 50,
+        height: 50,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#CBD5E1',
+    },
+    aiResultPill: {
+        backgroundColor: '#F1F5F9',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+    },
+    aiResultTag: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: '#64748B',
+        letterSpacing: 0.5,
+    },
+    aiResultValue: {
+        fontSize: 13,
+        fontWeight: '800',
+        color: '#055FEE',
+    },
+    chipsWrap: {
+        marginBottom: 10,
+    },
+    chipsTitle: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#64748B',
+        marginBottom: 6,
+    },
+    chipsScroll: {
+        gap: 8,
+    },
+    suggestionChip: {
+        backgroundColor: '#EFF6FF',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#BFDBFE',
+    },
+    suggestionChipText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#055FEE',
+    },
+    recipientToggleRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginBottom: 16,
+    },
+    recipientToggleBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 12,
+        borderRadius: 12,
+        backgroundColor: '#F1F5F9',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    recipientToggleBtnActive: {
+        backgroundColor: '#EFF6FF',
+        borderColor: '#055FEE',
+    },
+    recipientToggleText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#64748B',
+    },
+    recipientToggleTextActive: {
+        color: '#055FEE',
+        fontWeight: '700',
+    },
+    selfContactCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F0FDF4',
+        padding: 14,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#BBF7D0',
+        marginBottom: 18,
+    },
+    selfContactTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#166534',
+        marginBottom: 2,
+    },
+    selfContactDesc: {
+        fontSize: 12,
+        color: '#334155',
+    },
+    otherRecipientBox: {
+        marginBottom: 14,
+    },
+    textInput: {
+        backgroundColor: '#F8FAFC',
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        height: 48,
+        fontSize: 14,
+        color: '#0F172A',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        marginTop: 4,
+    },
+    inputError: {
+        borderColor: '#EF4444',
+        backgroundColor: '#FEF2F2',
+    },
+    smsAlertsSection: {
+        backgroundColor: '#F8FAFC',
+        padding: 14,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        marginTop: 6,
+    },
+    smsHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    smsHeaderLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    smsTitle: {
+        fontSize: 13,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    smsFeeBadge: {
+        backgroundColor: '#FEF3C7',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+    },
+    smsFeeText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#B45309',
+    },
+    smsDesc: {
+        fontSize: 12,
+        color: '#64748B',
+        lineHeight: 16,
+        marginBottom: 12,
+    },
+    smsOptionCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        padding: 12,
+        borderRadius: 12,
+        borderWidth: 1.5,
+        borderColor: '#E2E8F0',
+        gap: 10,
+    },
+    smsOptionCardActive: {
+        borderColor: '#10B981',
+        backgroundColor: '#F0FDF4',
+    },
+    checkboxCircle: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        borderWidth: 2,
+        borderColor: '#CBD5E1',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    checkboxCircleActive: {
+        backgroundColor: '#10B981',
+        borderColor: '#10B981',
+    },
+    smsOptionTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#1E293B',
+    },
+    smsOptionTitleActive: {
+        color: '#047857',
+    },
+    smsOptionSub: {
+        fontSize: 11,
+        color: '#64748B',
+    },
+    bidCard: {
+        backgroundColor: '#F8FAFC',
+        padding: 14,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        marginBottom: 16,
+    },
+    bidHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    bidHint: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#055FEE',
+    },
+    bidControlsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 16,
+        marginVertical: 4,
+    },
+    bidAdjustBtn: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: '#FFFFFF',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#CBD5E1',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        elevation: 1,
+    },
+    bidDisplayWrap: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        paddingHorizontal: 16,
+        paddingVertical: 6,
+        borderRadius: 12,
+        borderWidth: 1.5,
+        borderColor: '#055FEE',
+    },
+    currencyPrefix: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#055FEE',
+        marginRight: 4,
+    },
+    bidAmountInput: {
+        fontSize: 24,
+        fontWeight: '800',
+        color: '#0F172A',
+        minWidth: 70,
+        textAlign: 'center',
+    },
+    bidNote: {
+        fontSize: 11,
+        color: '#64748B',
+        textAlign: 'center',
+        marginTop: 6,
+    },
+    promoBox: {
+        marginBottom: 16,
+    },
+    promoInputRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F8FAFC',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        height: 48,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    promoInputField: {
+        flex: 1,
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#0F172A',
+    },
+    promoApplyButton: {
+        backgroundColor: '#055FEE',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+    },
+    promoApplyText: {
+        color: '#FFF',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    promoRemoveButton: {
+        backgroundColor: '#EF4444',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 8,
+    },
+    promoRemoveText: {
+        color: '#FFF',
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    promoFeedback: {
+        fontSize: 11,
+        marginTop: 4,
+        marginLeft: 4,
+        fontWeight: '600',
+    },
+    promoFeedbackSuccess: {
+        color: '#10B981',
+    },
+    promoFeedbackError: {
+        color: '#EF4444',
+    },
+    paymentSection: {
+        marginBottom: 16,
+    },
+    paymentMethodsGrid: {
+        gap: 10,
+        marginTop: 8,
+    },
+    paymentMethodCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F8FAFC',
+        padding: 12,
+        borderRadius: 14,
+        borderWidth: 1.5,
+        borderColor: '#E2E8F0',
+    },
+    paymentMethodCardActive: {
+        borderColor: '#055FEE',
+        backgroundColor: '#EFF6FF',
+    },
+    paymentMethodIcon: {
+        fontSize: 22,
+        marginRight: 12,
+    },
+    paymentMethodTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#1E293B',
+    },
+    paymentMethodTitleActive: {
+        color: '#055FEE',
+    },
+    paymentMethodSubtitle: {
+        fontSize: 11,
+        color: '#64748B',
+    },
+    radioCircle: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        borderWidth: 2,
+        borderColor: '#CBD5E1',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    radioCircleActive: {
+        borderColor: '#055FEE',
+    },
+    radioDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#055FEE',
+    },
+    digitalPhonePrompt: {
+        marginTop: 12,
+    },
+    breakdownCard: {
+        backgroundColor: '#F8FAFC',
+        borderRadius: 14,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    breakdownRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    breakdownLabel: {
+        fontSize: 13,
+        color: '#64748B',
+        fontWeight: '500',
+    },
+    breakdownValue: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#0F172A',
+    },
+    breakdownDivider: {
+        height: 1,
+        backgroundColor: '#E2E8F0',
+        marginVertical: 8,
+    },
+    breakdownTotalLabel: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    breakdownTotalValue: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#055FEE',
+    },
+    mockBtn: {
+        backgroundColor: '#F1F5F9',
+        padding: 12,
+        borderRadius: 12,
+        alignItems: 'center',
+        marginTop: 16,
+        borderWidth: 1,
+        borderColor: '#CBD5E1',
+    },
+    mockBtnText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#475569',
+    },
+    bottomBar: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: '#FFFFFF',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingTop: 12,
+        paddingBottom: Platform.OS === 'ios' ? 28 : 16,
+        borderTopWidth: 1,
+        borderTopColor: '#E2E8F0',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 8,
+    },
+    bottomBarFarePreview: {
+        marginRight: 12,
+    },
+    bottomFareLabel: {
+        fontSize: 11,
+        color: '#64748B',
+        fontWeight: '600',
+    },
+    bottomFareValue: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: '#0F172A',
+    },
+    bottomBarButtonsRow: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: 10,
+    },
+    backButton: {
+        width: 48,
+        height: 48,
+        borderRadius: 12,
+        backgroundColor: '#F1F5F9',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    nextButton: {
+        flex: 1,
+        maxWidth: 220,
+        borderRadius: 14,
+        overflow: 'hidden',
+    },
+    confirmButton: {
+        flex: 1,
+        maxWidth: 220,
+        borderRadius: 14,
+        overflow: 'hidden',
+    },
+    nextGradient: {
+        height: 48,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+    },
+    nextButtonText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '800',
     },
     debtBanner: {
         backgroundColor: '#FFFBEB',
         borderWidth: 1.5,
         borderColor: '#F59E0B',
-        borderRadius: 16,
-        padding: 16,
-        marginBottom: 20,
+        borderRadius: 14,
+        padding: 12,
+        marginHorizontal: 16,
+        marginTop: 12,
     },
     debtBannerTop: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: 12,
-        marginBottom: 12,
+        marginBottom: 8,
     },
     debtBannerIcon: {
-        fontSize: 24,
+        fontSize: 20,
+        marginRight: 8,
     },
     debtBannerTextWrap: {
         flex: 1,
     },
     debtBannerTitle: {
-        fontSize: 15,
+        fontSize: 13,
         fontWeight: '800',
         color: '#92400E',
-        marginBottom: 4,
     },
     debtBannerDesc: {
-        fontSize: 13,
+        fontSize: 11,
         color: '#B45309',
-        lineHeight: 18,
+        marginTop: 2,
     },
     debtBannerActionBtn: {
-        backgroundColor: '#D97706',
-        borderRadius: 10,
-        paddingVertical: 10,
-        paddingHorizontal: 16,
+        backgroundColor: '#F59E0B',
+        paddingVertical: 6,
+        borderRadius: 8,
         alignItems: 'center',
     },
     debtBannerActionText: {
-        color: '#FFFFFF',
-        fontSize: 14,
+        fontSize: 12,
         fontWeight: '700',
+        color: '#FFFFFF',
     },
     debtModalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        justifyContent: 'center',
-        padding: 24,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end',
     },
     debtModalCard: {
         backgroundColor: '#FFFFFF',
-        borderRadius: 24,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
         padding: 24,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.25,
-        shadowRadius: 20,
-        elevation: 10,
     },
     debtModalHeader: {
         flexDirection: 'row',
@@ -1307,711 +2366,61 @@ const styles = StyleSheet.create({
         fontWeight: '800',
         color: '#0F172A',
     },
-    debtModalClose: {
-        fontSize: 20,
-        color: '#94A3B8',
-        fontWeight: '700',
-    },
     debtModalAmount: {
-        fontSize: 36,
+        fontSize: 32,
         fontWeight: '900',
-        color: '#DC2626',
+        color: '#F59E0B',
         textAlign: 'center',
-        marginBottom: 8,
+        marginVertical: 8,
     },
     debtModalCurrency: {
-        fontSize: 18,
-        fontWeight: '600',
+        fontSize: 16,
         color: '#64748B',
     },
     debtModalExplainer: {
         fontSize: 13,
         color: '#64748B',
         textAlign: 'center',
-        lineHeight: 18,
         marginBottom: 20,
-    },
-    debtPaymentLabel: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: '#334155',
-        marginBottom: 8,
+        lineHeight: 18,
     },
     debtPaymentOptions: {
         flexDirection: 'row',
         gap: 12,
-        marginBottom: 16,
+        marginVertical: 10,
     },
     debtProviderBtn: {
         flex: 1,
         paddingVertical: 12,
         borderRadius: 12,
+        backgroundColor: '#F1F5F9',
+        alignItems: 'center',
         borderWidth: 1.5,
         borderColor: '#E2E8F0',
-        alignItems: 'center',
-        backgroundColor: '#F8FAFC',
     },
     debtProviderBtnActive: {
-        borderColor: '#055FEE',
         backgroundColor: '#EFF6FF',
+        borderColor: '#055FEE',
     },
     debtProviderText: {
-        fontSize: 14,
-        fontWeight: '700',
+        fontSize: 13,
+        fontWeight: '600',
         color: '#64748B',
     },
     debtProviderTextActive: {
         color: '#055FEE',
-    },
-    debtPhoneInput: {
-        backgroundColor: '#F8FAFC',
-        borderWidth: 1.5,
-        borderColor: '#E2E8F0',
-        borderRadius: 12,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        fontSize: 15,
-        color: '#0F172A',
-        marginBottom: 24,
+        fontWeight: '800',
     },
     debtSettleBtn: {
-        backgroundColor: '#055FEE',
+        backgroundColor: '#10B981',
+        paddingVertical: 14,
         borderRadius: 14,
-        paddingVertical: 16,
         alignItems: 'center',
+        marginTop: 16,
     },
     debtSettleBtnText: {
         color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: '800',
-    },
-    formCard: {
-        borderRadius: 24,
-        padding: 24,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.6)',
-        backgroundColor: 'rgba(255,255,255,0.4)',
-        overflow: 'hidden',
-        marginBottom: 24,
-    },
-    formSection: {
-        flex: 1,
-    },
-    sectionHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 16,
-    },
-    sectionIcon: {
-        fontSize: 20,
-        marginRight: 8,
-    },
-    sectionTitle: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#055FEE',
-    },
-    divider: {
-        height: 1,
-        backgroundColor: 'rgba(0,0,0,0.05)',
-        marginVertical: 24,
-    },
-    label: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#334155',
-        marginBottom: 8,
-        marginLeft: 4,
-    },
-    input: {
-        backgroundColor: '#FFFFFF',
-        paddingHorizontal: 16,
-        paddingVertical: 16,
-        borderRadius: 16,
-        fontSize: 16,
-        color: '#0F172A',
-        borderWidth: 1,
-        borderColor: 'rgba(0,0,0,0.05)',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.02,
-        shadowRadius: 4,
-        elevation: 1,
-    },
-    inputButton: {
-        backgroundColor: '#FFFFFF',
-        paddingHorizontal: 16,
-        paddingVertical: 16,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: 'rgba(0,0,0,0.05)',
-        justifyContent: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.02,
-        shadowRadius: 4,
-        elevation: 1,
-    },
-    inputText: {
-        fontSize: 16,
-        color: '#0F172A',
-        fontWeight: '500',
-    },
-    placeholderText: {
-        fontSize: 16,
-        color: '#94A3B8',
-    },
-    textArea: {
-        height: 120,
-        textAlignVertical: 'top',
-    },
-    errorInput: {
-        borderColor: '#EF4444',
-        borderWidth: 1.5,
-    },
-    summarySection: {
-        backgroundColor: '#FFFFFF',
-        padding: 20,
-        borderRadius: 20,
-        marginBottom: 24,
-        borderWidth: 1,
-        borderColor: 'rgba(176, 106, 40, 0.3)',
-        shadowColor: '#055FEE',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
-    },
-    summaryRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    summaryLabel: {
         fontSize: 15,
-        color: '#64748B',
-        fontWeight: '500',
-    },
-    summaryTitle: {
-        fontSize: 22,
         fontWeight: '800',
-        color: '#055FEE',
-    },
-    summaryText: {
-        fontSize: 15,
-        color: '#0F172A',
-        fontWeight: '600',
-    },
-    submitButtonContainer: {
-        borderRadius: 16,
-        overflow: 'hidden',
-        shadowColor: '#055FEE',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.3,
-        shadowRadius: 12,
-        elevation: 6,
-        marginBottom: 20,
-    },
-    submitGradient: {
-        paddingVertical: 18,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    submitButtonText: {
-        color: '#FFFFFF',
-        fontSize: 18,
-        fontWeight: 'bold',
-        letterSpacing: 0.5,
-    },
-    mockButton: {
-        backgroundColor: '#F1F5F9',
-        paddingVertical: 14,
-        borderRadius: 12,
-        alignItems: 'center',
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: '#CBD5E1',
-    },
-    mockButtonText: {
-        color: '#0F172A',
-        fontSize: 16,
-        fontWeight: 'bold',
-    },
-    scanButton: {
-        borderRadius: 16,
-        overflow: 'hidden',
-        marginBottom: 16,
-    },
-    scanGradient: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 14,
-        gap: 12,
-    },
-    scanIcon: {
-        fontSize: 20,
-    },
-    scanText: {
-        color: '#FFFFFF',
-        fontWeight: '700',
-        fontSize: 15,
-    },
-    scanningContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(5, 95, 238, 0.1)',
-        padding: 16,
-        borderRadius: 16,
-        marginBottom: 16,
-        gap: 12,
-        borderWidth: 1,
-        borderColor: 'rgba(176, 106, 40, 0.3)',
-    },
-    scanningText: {
-        color: '#055FEE',
-        fontWeight: '600',
-    },
-    previewContainer: {
-        width: '100%',
-        height: 200,
-        borderRadius: 20,
-        overflow: 'hidden',
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.2)',
-    },
-    imagePreview: {
-        width: '100%',
-        height: '100%',
-    },
-    aiBadge: {
-        position: 'absolute',
-        bottom: 12,
-        left: 12,
-        right: 12,
-        padding: 12,
-        borderRadius: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        overflow: 'hidden',
-    },
-    aiBadgeLabel: {
-        color: 'rgba(255,255,255,0.7)',
-        fontSize: 10,
-        fontWeight: '800',
-        letterSpacing: 1,
-    },
-    aiBadgeValue: {
-        color: '#055FEE',
-        fontWeight: '900',
-        fontSize: 14,
-    },
-    suggestionsWrapper: {
-        marginBottom: 12,
-    },
-    suggestionTitle: {
-        fontSize: 10,
-        fontWeight: '800',
-        color: '#64748B',
-        letterSpacing: 1,
-        marginBottom: 8,
-        marginLeft: 4,
-    },
-    suggestionsScroll: {
-        gap: 8,
-        paddingBottom: 4,
-    },
-    suggestionChip: {
-        backgroundColor: 'rgba(5, 95, 238, 0.1)',
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: 'rgba(176, 106, 40, 0.3)',
-    },
-    suggestionChipText: {
-        color: '#055FEE',
-        fontSize: 13,
-        fontWeight: '600',
-    },
-    bidSection: {
-        marginTop: 16,
-        paddingTop: 16,
-        borderTopWidth: 1,
-        borderTopColor: 'rgba(0,0,0,0.05)',
-    },
-    bidHeaderRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 12,
-    },
-    bidLabel: {
-        fontSize: 15,
-        fontWeight: '700',
-        color: '#475569',
-    },
-    bidHint: {
-        fontSize: 11,
-        color: '#94A3B8',
-        fontWeight: '600',
-    },
-    bidContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: '#F8FAFC',
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: 'rgba(0, 0, 0, 0.05)',
-        paddingHorizontal: 8,
-        paddingVertical: 6,
-    },
-    bidAdjustButton: {
-        width: 40,
-        height: 40,
-        borderRadius: 12,
-        backgroundColor: '#FFFFFF',
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: 'rgba(0, 0, 0, 0.05)',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 2,
-    },
-    bidAdjustButtonText: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#055FEE',
-    },
-    bidInput: {
-        flex: 1,
-        textAlign: 'center',
-        fontSize: 20,
-        fontWeight: '800',
-        color: '#055FEE',
-        paddingVertical: 8,
-    },
-    bidDivider: {
-        height: 1,
-        backgroundColor: 'rgba(0,0,0,0.05)',
-        marginVertical: 16,
-    },
-    promoSection: {
-        marginBottom: 16,
-    },
-    promoTitle: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: '#334155',
-        marginBottom: 8,
-        marginLeft: 2,
-    },
-    promoRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    promoInput: {
-        flex: 1,
-        backgroundColor: '#FFFFFF',
-        borderRadius: 14,
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        fontSize: 14,
-        fontWeight: '700',
-        color: '#0F172A',
-        borderWidth: 1,
-        borderColor: 'rgba(0,0,0,0.08)',
-        letterSpacing: 1,
-    },
-    promoApplyBtn: {
-        backgroundColor: '#055FEE',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderRadius: 14,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    promoApplyBtnText: {
-        color: '#FFFFFF',
-        fontWeight: '700',
-        fontSize: 13,
-    },
-    promoRemoveBtn: {
-        backgroundColor: '#FEE2E2',
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        borderRadius: 14,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    promoRemoveBtnText: {
-        color: '#EF4444',
-        fontWeight: '700',
-        fontSize: 12,
-    },
-    promoMessageText: {
-        fontSize: 12,
-        fontWeight: '600',
-        marginTop: 6,
-        marginLeft: 4,
-    },
-    promoErrorText: {
-        color: '#EF4444',
-    },
-    promoSuccessText: {
-        color: '#10B981',
-    },
-    // Payment Method Styles
-    paymentSubTitle: {
-        fontSize: 13,
-        color: '#64748B',
-        marginBottom: 14,
-        fontWeight: '500',
-    },
-    paymentOptionsGrid: {
-        gap: 10,
-        marginBottom: 8,
-    },
-    paymentOptionCard: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        padding: 14,
-        borderWidth: 1.5,
-        borderColor: 'rgba(0,0,0,0.06)',
-    },
-    paymentOptionCardActive: {
-        borderColor: '#055FEE',
-        backgroundColor: '#F0F7FF',
-    },
-    paymentOptionContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    paymentOptionEmoji: {
-        fontSize: 24,
-        marginRight: 12,
-    },
-    paymentOptionTextWrap: {
-        flex: 1,
-    },
-    paymentOptionTitle: {
-        fontSize: 15,
-        fontWeight: '700',
-        color: '#1E293B',
-        marginBottom: 2,
-    },
-    paymentOptionTitleActive: {
-        color: '#055FEE',
-    },
-    paymentOptionDesc: {
-        fontSize: 12,
-        color: '#64748B',
-    },
-    paymentRadio: {
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        borderWidth: 2,
-        borderColor: '#CBD5E1',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginLeft: 8,
-    },
-    paymentRadioActive: {
-        borderColor: '#055FEE',
-    },
-    paymentRadioDot: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
-        backgroundColor: '#055FEE',
-    },
-    paymentPhoneBox: {
-        marginTop: 12,
-        paddingTop: 12,
-        borderTopWidth: 1,
-        borderTopColor: 'rgba(0,0,0,0.06)',
-    },
-    customerPaymentBanner: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 14,
-        borderRadius: 16,
-        marginTop: 16,
-        gap: 12,
-    },
-    customerPaymentBannerCod: {
-        backgroundColor: '#FEF3C7',
-        borderWidth: 1,
-        borderColor: '#F59E0B',
-    },
-    customerPaymentBannerDigital: {
-        backgroundColor: '#ECFDF5',
-        borderWidth: 1,
-        borderColor: '#10B981',
-    },
-    customerPaymentBannerIcon: {
-        fontSize: 24,
-    },
-    customerPaymentBannerTextWrap: {
-        flex: 1,
-    },
-    customerPaymentBannerTitle: {
-        fontSize: 14,
-        fontWeight: '800',
-        marginBottom: 2,
-    },
-    customerPaymentBannerTitleCod: {
-        color: '#B45309',
-    },
-    customerPaymentBannerTitleDigital: {
-        color: '#065F46',
-    },
-    customerPaymentBannerDesc: {
-        fontSize: 12,
-        color: '#475569',
-        lineHeight: 16,
-    },
-    // Recipient Selector Styles
-    tabToggleRow: {
-        flexDirection: 'row',
-        backgroundColor: '#F1F5F9',
-        borderRadius: 14,
-        padding: 4,
-        marginBottom: 16,
-        gap: 6,
-    },
-    tabToggleButton: {
-        flex: 1,
-        paddingVertical: 10,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    tabToggleButtonActive: {
-        backgroundColor: '#FFFFFF',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 3,
-        elevation: 1,
-    },
-    tabToggleText: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: '#64748B',
-    },
-    tabToggleTextActive: {
-        color: '#055FEE',
-        fontWeight: '700',
-    },
-    recipientFieldsWrap: {
-        gap: 4,
-    },
-    selfRecipientInfo: {
-        backgroundColor: 'rgba(5, 95, 238, 0.06)',
-        padding: 14,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: 'rgba(5, 95, 238, 0.15)',
-    },
-    selfRecipientInfoText: {
-        fontSize: 13,
-        color: '#334155',
-        lineHeight: 18,
-    },
-    // SMS & WhatsApp Opt-in Card Styles
-    smsHeaderRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 10,
-        flexWrap: 'wrap',
-        gap: 8,
-    },
-    smsPricePill: {
-        backgroundColor: '#FEF3C7',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#FDE68A',
-    },
-    smsPricePillText: {
-        fontSize: 12,
-        fontWeight: '800',
-        color: '#B45309',
-    },
-    smsTagFreeBadge: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: '#059669',
-        backgroundColor: '#D1FAE5',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 8,
-    },
-    smsExplainerText: {
-        fontSize: 12,
-        color: '#64748B',
-        lineHeight: 17,
-        marginBottom: 14,
-    },
-    smsToggleCard: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 16,
-        padding: 14,
-        borderWidth: 1.5,
-        borderColor: 'rgba(0,0,0,0.06)',
-    },
-    smsToggleCardActive: {
-        borderColor: '#10B981',
-        backgroundColor: '#F0FDF4',
-    },
-    smsToggleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-    },
-    smsCheckbox: {
-        width: 22,
-        height: 22,
-        borderRadius: 6,
-        borderWidth: 2,
-        borderColor: '#CBD5E1',
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#FFFFFF',
-    },
-    smsCheckboxActive: {
-        borderColor: '#10B981',
-        backgroundColor: '#10B981',
-    },
-    smsCheckmark: {
-        color: '#FFFFFF',
-        fontSize: 13,
-        fontWeight: '900',
-    },
-    smsToggleTitle: {
-        fontSize: 14,
-        fontWeight: '700',
-        color: '#1E293B',
-        marginBottom: 2,
-    },
-    smsToggleTitleActive: {
-        color: '#047857',
-    },
-    smsToggleDesc: {
-        fontSize: 12,
-        color: '#64748B',
     },
 });

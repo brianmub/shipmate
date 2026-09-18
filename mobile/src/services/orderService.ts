@@ -77,11 +77,7 @@ export const orderService = {
             .gt('created_at', twelveHoursAgo)
             .order('created_at', { ascending: false });
 
-        // Non-platinum drivers only see jobs where priority window is null or has expired
-        if (driverTier !== 'platinum') {
-            query = query.or(`priority_window_ends_at.is.null,priority_window_ends_at.lte.${nowIso}`);
-        }
-
+        // Fetch all pending jobs created in the last 12 hours
         const { data, error } = await query;
 
         if (error) throw error;

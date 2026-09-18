@@ -73,6 +73,16 @@ export interface Vehicle {
     insurance_expiry_date: string | null;
 }
 
+export interface DriverDocument {
+    id: string;
+    driver_id: string;
+    document_type: DocumentType;
+    file_url: string;
+    uploaded_at: string;
+    verified: boolean;
+    verified_at?: string | null;
+}
+
 export type ServiceType = 'delivery' | 'errand';
 
 export type OrderStatus = 

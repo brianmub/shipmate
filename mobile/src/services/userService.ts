@@ -73,43 +73,65 @@ export const userService = {
     },
 
     /**
-     * Fetch driver verification status
+     * Fetch driver verification details including status and rejection reason
      */
-    async getDriverStatus(userId: string) {
+    async getDriverVerificationDetails(userId: string) {
         try {
-            // 1. Fetch driver status
+            // 1. Fetch driver status and rejection reason
             const { data: driverData, error: driverError } = await supabase
                 .from('drivers')
-                .select('verification_status')
+                .select('verification_status, rejection_reason')
                 .eq('id', userId)
                 .single();
             
             if (driverError) {
-                if (driverError.code === 'PGRST116') return 'onboarding'; // No profile created yet
+                if (driverError.code === 'PGRST116') return { status: 'onboarding', rejectionReason: null };
                 throw driverError;
             }
 
-            // 2. Fetch driver application details to check onboarding completion
-            const { data: appData, error: appError } = await supabase
+            // Explicitly approved, rejected, or suspended drivers are post-onboarding
+            if (driverData.verification_status === 'approved' || driverData.verification_status === 'rejected' || driverData.verification_status === 'suspended') {
+                return {
+                    status: driverData.verification_status,
+                    rejectionReason: driverData.rejection_reason || null
+                };
+            }
+
+            // 2. For drivers marked 'pending', check if onboarding application was actually completed & submitted
+            const { data: appData } = await supabase
                 .from('driver_applications')
                 .select('screening_status')
                 .eq('id', userId)
-                .single();
+                .maybeSingle();
 
-            // If no application exists, or screening_status is not 'completed', they are still onboarding
-            if (appError || !appData || appData.screening_status !== 'completed') {
-                // If driver is already approved in drivers subtable (e.g. seeded drivers), respect it
-                if (driverData.verification_status === 'approved') {
-                    return 'approved';
-                }
-                return 'onboarding';
+            // Also check if they submitted documents
+            const { count: docsCount } = await supabase
+                .from('driver_documents')
+                .select('*', { count: 'exact', head: true })
+                .eq('driver_id', userId);
+
+            // If pre-screening was completed/skipped, or documents were uploaded, they are awaiting admin review
+            if ((appData && (appData.screening_status === 'completed' || appData.screening_status === 'skipped')) || (docsCount !== null && docsCount > 0)) {
+                return {
+                    status: 'pending',
+                    rejectionReason: driverData.rejection_reason || null
+                };
             }
 
-            return driverData.verification_status;
+            // Otherwise, newly registered driver who has not finished onboarding
+            return { status: 'onboarding', rejectionReason: null };
         } catch (error) {
             console.log('Error fetching driver status, defaulting to onboarding:', error);
-            return 'onboarding';
+            return { status: 'onboarding', rejectionReason: null };
         }
+    },
+
+    /**
+     * Fetch driver verification status
+     */
+    async getDriverStatus(userId: string) {
+        const details = await this.getDriverVerificationDetails(userId);
+        return details.status;
     },
 
     /**

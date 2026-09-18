@@ -10,6 +10,7 @@ import { WalletScreen } from '../screens/driver/WalletScreen';
 import { DriverOnboardingScreen } from '../screens/driver/DriverOnboardingScreen';
 import { DriverActiveJobScreen } from '../screens/driver/DriverActiveJobScreen';
 import { EarningsScreen } from '../screens/driver/EarningsScreen';
+import { DriverSecurityCheckScreen } from '../screens/driver/DriverSecurityCheckScreen';
 import { ChatScreen } from '../screens/ChatScreen';
 
 import { useAuthStore } from '../store/authStore';
@@ -26,11 +27,13 @@ export const DriverNavigator = () => {
         return <OnboardingNavigator />;
     }
 
-    // If driver has submitted but is not approved (pending, rejected, or suspended), show status screen
-    if (verificationStatus !== 'approved') {
+    // If application was rejected by admin, show feedback status screen so they can fix & resubmit
+    if (verificationStatus === 'rejected') {
         return <DriverStatusScreen />;
     }
 
+    // For both 'pending' (under review) and 'approved' couriers, show the Main Driver Dashboard
+    // In 'pending' mode, DriverHomeScreen displays limited/locked features alongside the Courier Academy orientation guides
     return (
         <Drawer.Navigator
             screenOptions={{
@@ -68,6 +71,14 @@ export const DriverNavigator = () => {
                 name="Profile"
                 component={DriverProfileScreen}
                 options={{ title: 'My Profile' }}
+            />
+            <Drawer.Screen
+                name="SecurityCheck"
+                component={DriverSecurityCheckScreen}
+                options={{ 
+                    title: 'Security Verification',
+                    drawerItemStyle: { display: 'none' } // Hide from drawer menu
+                }}
             />
             <Drawer.Screen
                 name="Chat"

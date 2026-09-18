@@ -7,19 +7,22 @@ import { useAuthStore } from '../../store/authStore';
 import { userService } from '../../services/userService';
 
 export const DriverStatusScreen = () => {
-    const { verificationStatus, setVerificationStatus, signOut, user } = useAuthStore();
+    const { verificationStatus, setVerificationStatus, rejectionReason, setRejectionReason, signOut, user } = useAuthStore();
     const [refreshing, setRefreshing] = useState(false);
 
     const handleRefresh = async () => {
         if (!user) return;
         try {
             setRefreshing(true);
-            const status = await userService.getDriverStatus(user.id);
-            setVerificationStatus(status as any);
-            if (status === 'approved') {
+            const details = await userService.getDriverVerificationDetails(user.id);
+            setVerificationStatus(details.status as any);
+            setRejectionReason(details.rejectionReason);
+            if (details.status === 'approved') {
                 Alert.alert('Congratulations! 🎉', 'Your application has been approved. Welcome to ShipMate!');
+            } else if (details.status === 'rejected') {
+                Alert.alert('Action Required', 'Your application requires updates. Please review the admin instructions below.');
             } else {
-                Alert.alert('Status Update', `Your current application status is: ${status?.toUpperCase()}`);
+                Alert.alert('Status Update', `Your current application status is: ${details.status?.toUpperCase()}`);
             }
         } catch (error: any) {
             Alert.alert('Refresh Failed', error.message);
@@ -28,14 +31,19 @@ export const DriverStatusScreen = () => {
         }
     };
 
+    const handleFixAndResubmit = () => {
+        // Switch to onboarding view so driver can re-upload photos and update details
+        setVerificationStatus('onboarding');
+    };
+
     const getStatusContent = () => {
         switch (verificationStatus) {
             case 'rejected':
                 return {
                     icon: 'alert-circle-outline',
                     iconColor: '#EF4444',
-                    title: 'Application Declined',
-                    description: 'Unfortunately, your Mate application has been reviewed and declined. Please contact our Mate support team to appeal this decision.',
+                    title: 'Application Needs Updates',
+                    description: 'Our administration team reviewed your application, but some documents or information need to be corrected before your account can be approved.',
                 };
             case 'suspended':
                 return {
@@ -50,7 +58,7 @@ export const DriverStatusScreen = () => {
                     icon: 'time-outline',
                     iconColor: '#F59E0B',
                     title: 'Application Under Review',
-                    description: 'Our administration team is currently verifying your documents and AI pre-screening report. We will send you a push notification as soon as your account is approved.',
+                    description: 'Our administration team is currently verifying your documents and vehicle inspection photos. We will notify you as soon as your account is approved.',
                 };
         }
     };
@@ -75,20 +83,51 @@ export const DriverStatusScreen = () => {
                         <Text style={styles.cardTitle}>{content.title}</Text>
                         <Text style={styles.cardDescription}>{content.description}</Text>
 
-                        <TouchableOpacity 
-                            style={styles.refreshBtn} 
-                            onPress={handleRefresh}
-                            disabled={refreshing}
-                        >
-                            {refreshing ? (
-                                <ActivityIndicator color="#FFF" />
-                            ) : (
-                                <>
-                                    <Ionicons name="refresh-outline" size={20} color="#FFF" style={styles.btnIcon} />
-                                    <Text style={styles.refreshTxt}>Check Status</Text>
-                                </>
+                        {/* Admin Feedback Box for Disapproved / Fix Required Applications */}
+                        {verificationStatus === 'rejected' && (
+                            <View style={styles.feedbackContainer}>
+                                <View style={styles.feedbackHeader}>
+                                    <Ionicons name="chatbubble-ellipses-outline" size={16} color="#EF4444" />
+                                    <Text style={styles.feedbackTitle}>WHY APPLICATION WAS NOT APPROVED</Text>
+                                </View>
+                                <Text style={styles.feedbackBody}>
+                                    {rejectionReason || 'Some documents or details were incomplete or unclear. Please re-upload clear photos.'}
+                                </Text>
+                                <Text style={styles.feedbackHint}>
+                                    Tap "Update Documents & Resubmit" below to fix this reason and resubmit for approval.
+                                </Text>
+                            </View>
+                        )}
+
+                        {/* Action buttons */}
+                        <View style={styles.actionsContainer}>
+                            {verificationStatus === 'rejected' && (
+                                <TouchableOpacity 
+                                    style={styles.fixButton} 
+                                    onPress={handleFixAndResubmit}
+                                >
+                                    <Ionicons name="cloud-upload-outline" size={20} color="#FFF" style={styles.btnIcon} />
+                                    <Text style={styles.fixButtonText}>Update Documents & Resubmit</Text>
+                                </TouchableOpacity>
                             )}
-                        </TouchableOpacity>
+
+                            <TouchableOpacity 
+                                style={[styles.refreshBtn, verificationStatus === 'rejected' && styles.refreshBtnSecondary]} 
+                                onPress={handleRefresh}
+                                disabled={refreshing}
+                            >
+                                {refreshing ? (
+                                    <ActivityIndicator color="#FFF" />
+                                ) : (
+                                    <>
+                                        <Ionicons name="refresh-outline" size={20} color={verificationStatus === 'rejected' ? '#94A3B8' : '#FFF'} style={styles.btnIcon} />
+                                        <Text style={[styles.refreshTxt, verificationStatus === 'rejected' && styles.refreshTxtSecondary]}>
+                                            Check Status
+                                        </Text>
+                                    </>
+                                )}
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
 
@@ -184,6 +223,12 @@ const styles = StyleSheet.create({
         shadowRadius: 8,
         elevation: 3,
     },
+    refreshBtnSecondary: {
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        shadowOpacity: 0,
+    },
     btnIcon: {
         marginRight: 8,
     },
@@ -191,6 +236,66 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: 15,
         fontWeight: '700',
+    },
+    refreshTxtSecondary: {
+        color: '#CBD5E1',
+    },
+    feedbackContainer: {
+        width: '100%',
+        backgroundColor: 'rgba(239, 68, 68, 0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.25)',
+        borderRadius: 20,
+        padding: 16,
+        marginBottom: 24,
+    },
+    feedbackHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 8,
+    },
+    feedbackTitle: {
+        fontSize: 11,
+        fontWeight: '900',
+        color: '#EF4444',
+        letterSpacing: 0.5,
+    },
+    feedbackBody: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#FECACA',
+        lineHeight: 20,
+        marginBottom: 8,
+    },
+    feedbackHint: {
+        fontSize: 12,
+        color: '#94A3B8',
+        lineHeight: 16,
+    },
+    actionsContainer: {
+        width: '100%',
+        gap: 12,
+    },
+    fixButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#055FEE',
+        paddingHorizontal: 24,
+        paddingVertical: 14,
+        borderRadius: 16,
+        width: '100%',
+        shadowColor: '#055FEE',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    fixButtonText: {
+        color: '#FFF',
+        fontSize: 15,
+        fontWeight: '800',
     },
     logoutBtn: {
         flexDirection: 'row',
