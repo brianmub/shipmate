@@ -61,12 +61,66 @@ export const userService = {
     },
 
     /**
-     * Toggle driver online status
+     * Toggle driver online status and optionally record initial GPS position
      */
-    async toggleOnlineStatus(userId: string, isOnline: boolean) {
+    async toggleOnlineStatus(userId: string, isOnline: boolean, latitude?: number, longitude?: number) {
+        if (isOnline) {
+            const { data: wallet } = await supabase
+                .from('courier_wallets')
+                .select('balance, status')
+                .eq('courier_id', userId)
+                .single();
+
+            if (wallet && (wallet.status === 'locked' || Number(wallet.balance) <= 0.25)) {
+                // Force offline in database
+                await supabase.from('drivers').update({ is_online: false }).eq('id', userId);
+                throw new Error('Wallet balance is at or below minimum float ($0.25). Please top up via ClicknPay to go online.');
+            }
+        }
+
+        const updatePayload: any = { is_online: isOnline };
+        if (latitude !== undefined && longitude !== undefined && !isNaN(latitude) && !isNaN(longitude)) {
+            updatePayload.current_latitude = latitude;
+            updatePayload.current_longitude = longitude;
+            updatePayload.location_updated_at = new Date().toISOString();
+        }
+
         const { error } = await supabase
             .from('drivers')
-            .update({ is_online: isOnline })
+            .update(updatePayload)
+            .eq('id', userId);
+
+        if (error) throw error;
+    },
+
+    /**
+     * Update driver live GPS coordinates while online
+     */
+    async updateDriverLocation(userId: string, latitude: number, longitude: number, heading: number = 0) {
+        if (isNaN(latitude) || isNaN(longitude)) return;
+
+        try {
+            // First attempt via secure RPC
+            const { data, error } = await supabase.rpc('update_driver_online_location_rpc', {
+                p_latitude: latitude,
+                p_longitude: longitude,
+                p_heading: heading || 0
+            });
+
+            if (!error && data?.success) return data;
+        } catch (rpcErr) {
+            console.warn('update_driver_online_location_rpc fallback to direct update:', rpcErr);
+        }
+
+        // Direct table update fallback
+        const { error } = await supabase
+            .from('drivers')
+            .update({
+                current_latitude: latitude,
+                current_longitude: longitude,
+                heading: heading || 0,
+                location_updated_at: new Date().toISOString()
+            })
             .eq('id', userId);
 
         if (error) throw error;

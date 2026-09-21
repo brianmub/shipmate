@@ -13,14 +13,14 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-Write-Host "`nCompressing bundle into deploy.zip..." -ForegroundColor Yellow
-Compress-Archive -Path "web-admin\dist\*" -DestinationPath "deploy.zip" -Force
+Write-Host "`nCreating deployment tarball..." -ForegroundColor Yellow
+tar -czf deploy.tar.gz -C web-admin/dist .
 
-Write-Host "Uploading deploy.zip to live server via SSH..." -ForegroundColor Yellow
-scp deploy.zip root@212.90.121.97:/tmp/deploy.zip
+Write-Host "Uploading deploy.tar.gz to live server via SSH..." -ForegroundColor Yellow
+scp deploy.tar.gz root@212.90.121.97:/tmp/deploy.tar.gz
 
 Write-Host "Extracting into /var/www/shipmate/ and reloading Nginx..." -ForegroundColor Yellow
-ssh root@212.90.121.97 "unzip -qo /tmp/deploy.zip -d /var/www/shipmate/ && rm -f /tmp/deploy.zip && systemctl reload nginx"
+ssh root@212.90.121.97 "tar -xzf /tmp/deploy.tar.gz -C /var/www/shipmate/ && rm -f /tmp/deploy.tar.gz && systemctl reload nginx"
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`n✅ Successfully deployed live! Visit: https://shipmate.co.zw" -ForegroundColor Green

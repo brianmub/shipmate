@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { supabase } from '../../utils/supabase';
 import { createClient } from '@supabase/supabase-js';
 import { 
@@ -142,7 +143,24 @@ interface UserProfile {
   } | null;
 }
 
-export const UserManagement = () => {
+interface UserManagementProps {
+  initialTab?: 'couriers' | 'users' | 'leads' | 'applicants';
+}
+
+export const UserManagement: React.FC<UserManagementProps> = ({ initialTab }) => {
+  const location = useLocation();
+
+  const getInitialTab = (): 'couriers' | 'users' | 'leads' | 'applicants' => {
+    if (initialTab) return initialTab;
+    if (location.pathname.includes('/admin/approvals') || location.pathname.includes('/admin/couriers')) {
+      return 'couriers';
+    }
+    if (location.pathname.includes('/admin/users')) {
+      return 'users';
+    }
+    return 'couriers';
+  };
+
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -176,8 +194,16 @@ export const UserManagement = () => {
   const [newPhone, setNewPhone] = useState('');
   const [newRole, setNewRole] = useState<'customer' | 'driver' | 'admin'>('customer');
 
-  // Main Tab Navigation: Defaults to 'couriers' so pending drivers are immediately visible!
-  const [activeMainTab, setActiveMainTab] = useState<'couriers' | 'users' | 'leads' | 'applicants'>('couriers');
+  // Main Tab Navigation: Defaults based on route or prop so pending drivers are immediately visible!
+  const [activeMainTab, setActiveMainTab] = useState<'couriers' | 'users' | 'leads' | 'applicants'>(getInitialTab);
+
+  useEffect(() => {
+    if (location.pathname.includes('/admin/approvals') || location.pathname.includes('/admin/couriers')) {
+      setActiveMainTab('couriers');
+    } else if (location.pathname === '/admin/users') {
+      setActiveMainTab('users');
+    }
+  }, [location.pathname]);
 
   // Courier Filter & Management State
   const [courierSearchTerm, setCourierSearchTerm] = useState('');
@@ -375,7 +401,7 @@ export const UserManagement = () => {
         { data: vehiclesData }
       ] = await Promise.all([
         supabase.from('courier_wallets').select('courier_id, balance, status'),
-        supabase.from('driver_documents').select('*'),
+        supabase.from('driver_documents').select('*').order('uploaded_at', { ascending: false }),
         supabase.from('vehicles').select('*')
       ]);
 
@@ -470,13 +496,15 @@ export const UserManagement = () => {
   const handleApproveDriver = async (user: UserProfile) => {
     try {
       setLoading(true);
+      const nowIso = new Date().toISOString();
+
       const { error: drvErr } = await supabase
         .from('drivers')
         .update({
           verification_status: 'approved',
           rejection_reason: null,
           is_identity_verified: true,
-          last_verification_at: new Date().toISOString()
+          last_verification_at: nowIso
         })
         .eq('id', user.id);
 
@@ -484,7 +512,7 @@ export const UserManagement = () => {
 
       await supabase
         .from('users')
-        .update({ account_status: 'active' })
+        .update({ account_status: 'active', role: 'driver' })
         .eq('id', user.id);
 
       await supabase
@@ -492,15 +520,48 @@ export const UserManagement = () => {
         .update({ status: 'active' })
         .eq('courier_id', user.id);
 
+      // Also verify all uploaded documents for this driver
+      await supabase
+        .from('driver_documents')
+        .update({
+          verified: true,
+          verified_at: nowIso
+        })
+        .eq('driver_id', user.id);
+
+      // Verify driver_applications if existing
+      await supabase
+        .from('driver_applications')
+        .update({
+          id_verification_status: 'verified',
+          license_verification_status: 'verified'
+        })
+        .eq('id', user.id);
+
+      // Activate vehicle if registered
+      await supabase
+        .from('vehicles')
+        .update({ is_active: true })
+        .eq('driver_id', user.id);
+
       setUsers(prev => prev.map(u => {
         if (u.id === user.id) {
+          const updatedDocs = (u.driver_documents || []).map(d => ({ ...d, verified: true, verified_at: nowIso }));
           return {
             ...u,
+            role: 'driver',
             account_status: 'active',
             drivers: u.drivers 
-              ? { ...u.drivers, verification_status: 'approved', rejection_reason: null }
-              : { verification_status: 'approved', platform_balance: 0, total_deliveries: 0, average_rating: 5 },
-            courier_wallets: u.courier_wallets ? { ...u.courier_wallets, status: 'active' } : { balance: 0, status: 'active' }
+              ? { ...u.drivers, verification_status: 'approved', rejection_reason: null, is_identity_verified: true, last_verification_at: nowIso }
+              : { verification_status: 'approved', rejection_reason: null, is_identity_verified: true, last_verification_at: nowIso, platform_balance: 0, total_deliveries: 0, average_rating: 5 },
+            courier_wallets: u.courier_wallets ? { ...u.courier_wallets, status: 'active' } : { balance: 0, status: 'active' },
+            driver_documents: updatedDocs,
+            vehicle: u.vehicle ? { ...u.vehicle, is_active: true } : u.vehicle,
+            driver_applications: u.driver_applications ? {
+              ...u.driver_applications,
+              id_verification_status: 'verified',
+              license_verification_status: 'verified'
+            } : u.driver_applications
           };
         }
         return u;
@@ -510,15 +571,19 @@ export const UserManagement = () => {
       if (selectedUser?.id === user.id) {
         setSelectedUser(prev => prev ? {
           ...prev,
+          role: 'driver',
           account_status: 'active',
-          drivers: prev.drivers ? { ...prev.drivers, verification_status: 'approved', rejection_reason: null } : null
+          drivers: prev.drivers ? { ...prev.drivers, verification_status: 'approved', rejection_reason: null, is_identity_verified: true } : null
         } : null);
       }
       if (selectedCourier?.id === user.id) {
         setSelectedCourier(prev => prev ? {
           ...prev,
+          role: 'driver',
           account_status: 'active',
-          drivers: prev.drivers ? { ...prev.drivers, verification_status: 'approved', rejection_reason: null } : null
+          drivers: prev.drivers ? { ...prev.drivers, verification_status: 'approved', rejection_reason: null, is_identity_verified: true } : null,
+          driver_documents: (prev.driver_documents || []).map(d => ({ ...d, verified: true })),
+          vehicle: prev.vehicle ? { ...prev.vehicle, is_active: true } : prev.vehicle
         } : null);
       }
     } catch (err: any) {
@@ -632,9 +697,37 @@ export const UserManagement = () => {
 
       if (error) throw error;
 
+      const newBal = data !== null && data !== undefined ? Number(data) : ((selectedUser.courier_wallets?.balance || 0) + amountNum);
+      const newStatus: 'active' | 'locked' = newBal >= 0.25 ? 'active' : 'locked';
+
+      setUsers(prevUsers => prevUsers.map(u => {
+        if (u.id === selectedUser.id) {
+          return {
+            ...u,
+            courier_wallets: {
+              balance: newBal,
+              status: newStatus
+            }
+          };
+        }
+        return u;
+      }));
+
+      setSelectedUser(prev => prev ? {
+        ...prev,
+        courier_wallets: { balance: newBal, status: newStatus }
+      } : null);
+
+      if (selectedCourier && selectedCourier.id === selectedUser.id) {
+        setSelectedCourier(prev => prev ? {
+          ...prev,
+          courier_wallets: { balance: newBal, status: newStatus }
+        } : null);
+      }
+
       showToast(`Successfully credited $${amountNum.toFixed(2)} to ${selectedUser.full_name || selectedUser.email}'s wallet.`);
       setShowTopUpModalAdmin(false);
-      fetchUsers(); // Refresh list to update display balances
+      fetchUsers(); // Sync with database
     } catch (err: any) {
       alert(`Manual adjustment failed: ${err.message}`);
     } finally {
@@ -801,8 +894,17 @@ export const UserManagement = () => {
   };
 
   // Filter logic for Couriers & Pending Approvals
-  const couriers = users.filter(u => u.role === 'driver' || Boolean(u.drivers) || Boolean(u.driver_applications));
-  const pendingCouriersCount = couriers.filter(c => c.drivers?.verification_status === 'pending' || !c.drivers?.verification_status || c.drivers?.verification_status === 'submitted').length;
+  const couriers = users.filter(
+    u => u.role === 'driver' || 
+         Boolean(u.drivers) || 
+         Boolean(u.driver_applications) || 
+         Boolean(u.driver_documents && u.driver_documents.length > 0) || 
+         Boolean(u.vehicle)
+  );
+  const pendingCouriersCount = couriers.filter(c => {
+    const status = c.drivers?.verification_status;
+    return status === 'pending' || !status || status === 'submitted';
+  }).length;
   const approvedCouriersCount = couriers.filter(c => c.drivers?.verification_status === 'approved').length;
   const rejectedCouriersCount = couriers.filter(c => c.drivers?.verification_status === 'rejected').length;
   const onlineCouriersCount = couriers.filter(c => c.drivers?.is_online).length;
@@ -886,7 +988,7 @@ export const UserManagement = () => {
   });
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 p-6 sm:p-8 font-sans">
+    <div className="min-h-screen bg-slate-900 text-slate-100 p-4 sm:p-6 lg:p-8 font-sans">
       <div className="max-w-7xl mx-auto space-y-8">
         
         {/* Header Section */}
@@ -1288,6 +1390,22 @@ export const UserManagement = () => {
                                     <MessageSquare className="w-3.5 h-3.5" />
                                   </a>
                                 )}
+
+                                <button
+                                  onClick={() => handleOpenTopUpModal(courier)}
+                                  className="p-2 bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-slate-950 border border-amber-500/20 rounded-xl transition-all cursor-pointer"
+                                  title="Top Up Driver Wallet"
+                                >
+                                  <Wallet className="w-3.5 h-3.5" />
+                                </button>
+
+                                <button
+                                  onClick={() => handleOpenLedgerModal(courier)}
+                                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 rounded-xl transition-all cursor-pointer"
+                                  title="View Wallet Ledger History"
+                                >
+                                  <Clock className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -1457,7 +1575,23 @@ export const UserManagement = () => {
                               <div className="space-y-1 font-medium text-slate-350">
                                 <p>Status: <span className="font-bold text-white uppercase tracking-wider text-[10px]">{user.drivers?.verification_status || 'Pending'}</span></p>
                                 <p>Deliveries: <span className="font-bold text-white">{user.drivers?.total_deliveries || 0}</span></p>
-                                <p>Wallet Balance: <span className="font-extrabold text-emerald-400">${user.courier_wallets?.balance !== undefined ? user.courier_wallets.balance.toFixed(2) : '0.00'}</span></p>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <p>Wallet: <span className="font-extrabold text-emerald-400">${user.courier_wallets?.balance !== undefined ? user.courier_wallets.balance.toFixed(2) : '0.00'}</span></p>
+                                  <button
+                                    onClick={() => handleOpenTopUpModal(user)}
+                                    className="px-2 py-0.5 bg-amber-500/15 hover:bg-amber-500 text-amber-400 hover:text-slate-950 border border-amber-500/30 text-[10px] font-bold rounded transition-all cursor-pointer"
+                                    title="Top Up Driver Wallet"
+                                  >
+                                    + Top Up
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenLedgerModal(user)}
+                                    className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-[10px] font-bold rounded transition-all cursor-pointer"
+                                    title="View Ledger"
+                                  >
+                                    Ledger
+                                  </button>
+                                </div>
                                 <p>Wallet Status: <span className={`font-bold ${user.courier_wallets?.status === 'locked' ? 'text-rose-450' : 'text-emerald-400'} uppercase tracking-wider text-[10px]`}>{user.courier_wallets?.status || 'Active'}</span></p>
                                 <p>Rating: <span className="font-bold text-white">{user.drivers?.average_rating || 'N/A'} ⭐</span></p>
                               </div>
@@ -1930,18 +2064,18 @@ export const UserManagement = () => {
       {/* COURIER APPLICATION REVIEW MODAL */}
       {/* ========================================================= */}
       {showReviewModal && selectedCourier && (
-        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-2xl relative max-h-[92vh] flex flex-col overflow-hidden">
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-3xl sm:rounded-[2.5rem] shadow-2xl relative max-h-[96vh] sm:max-h-[92vh] flex flex-col overflow-hidden">
             
             {/* Modal Header */}
-            <div className="p-6 sm:p-7 border-b border-slate-800 flex items-start justify-between shrink-0 bg-slate-900/60 backdrop-blur-sm">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-brand-blue/15 text-brand-blue border border-brand-blue/30 flex items-center justify-center shrink-0 mt-0.5">
-                  <Truck className="w-6 h-6" />
+            <div className="p-4 sm:p-7 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shrink-0 bg-slate-900/60 backdrop-blur-sm">
+              <div className="flex items-start gap-3 sm:gap-4">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-brand-blue/15 text-brand-blue border border-brand-blue/30 flex items-center justify-center shrink-0 mt-0.5">
+                  <Truck className="w-5 h-5 sm:w-6 sm:h-6" />
                 </div>
                 <div className="space-y-1">
-                  <div className="flex items-center gap-3">
-                    <h2 className="text-2xl font-black text-white">{selectedCourier.full_name || 'Unnamed Driver'}</h2>
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                    <h2 className="text-xl sm:text-2xl font-black text-white">{selectedCourier.full_name || 'Unnamed Driver'}</h2>
                     <span className={`text-xs font-black uppercase px-2.5 py-0.5 rounded-lg border ${
                       selectedCourier.drivers?.verification_status === 'approved'
                         ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
@@ -2012,10 +2146,10 @@ export const UserManagement = () => {
             )}
 
             {/* Sub-tab Navigation */}
-            <div className="flex items-center gap-3 px-7 pt-4 border-b border-slate-800/80 bg-slate-900/40 shrink-0">
+            <div className="flex items-center gap-2 sm:gap-3 px-4 sm:px-7 pt-3 sm:pt-4 border-b border-slate-800/80 bg-slate-900/40 shrink-0 overflow-x-auto no-scrollbar">
               <button
                 onClick={() => setReviewActiveSubTab('docs')}
-                className={`pb-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+                className={`pb-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
                   reviewActiveSubTab === 'docs'
                     ? 'border-brand-blue text-brand-blue font-extrabold'
                     : 'border-transparent text-slate-400 hover:text-white'
@@ -2030,7 +2164,7 @@ export const UserManagement = () => {
 
               <button
                 onClick={() => setReviewActiveSubTab('vehicle')}
-                className={`pb-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+                className={`pb-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
                   reviewActiveSubTab === 'vehicle'
                     ? 'border-brand-blue text-brand-blue font-extrabold'
                     : 'border-transparent text-slate-400 hover:text-white'
@@ -2047,7 +2181,7 @@ export const UserManagement = () => {
 
               <button
                 onClick={() => setReviewActiveSubTab('ai')}
-                className={`pb-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+                className={`pb-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
                   reviewActiveSubTab === 'ai'
                     ? 'border-brand-blue text-brand-blue font-extrabold'
                     : 'border-transparent text-slate-400 hover:text-white'
@@ -2098,9 +2232,29 @@ export const UserManagement = () => {
                     </div>
                     <div>
                       <span className="text-slate-500 block text-[10px] uppercase font-bold">Account Wallet Balance</span>
-                      <span className="text-emerald-400 font-black text-sm mt-0.5 block">
-                        ${selectedCourier.courier_wallets?.balance !== undefined ? selectedCourier.courier_wallets.balance.toFixed(2) : '0.00'}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                        <span className="text-emerald-400 font-black text-sm">
+                          ${selectedCourier.courier_wallets?.balance !== undefined ? selectedCourier.courier_wallets.balance.toFixed(2) : '0.00'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenTopUpModal(selectedCourier)}
+                          className="px-2 py-0.5 bg-amber-500/15 hover:bg-amber-500 text-amber-400 hover:text-slate-950 border border-amber-500/30 text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                          title="Top Up Driver Float"
+                        >
+                          <Wallet className="w-3 h-3" />
+                          <span>+ Top Up</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenLedgerModal(selectedCourier)}
+                          className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                          title="View Ledger History"
+                        >
+                          <Clock className="w-3 h-3" />
+                          <span>Ledger</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -2633,8 +2787,8 @@ export const UserManagement = () => {
             </div>
 
             {/* Modal Bottom Decision Actions Bar */}
-            <div className="p-6 border-t border-slate-800 bg-slate-900/90 backdrop-blur-sm flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
-              <div className="flex items-center gap-3 text-xs w-full sm:w-auto">
+            <div className="p-4 sm:p-6 border-t border-slate-800 bg-slate-900/90 backdrop-blur-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center justify-between sm:justify-start gap-3 text-xs w-full sm:w-auto">
                 <span className="text-slate-400 font-semibold">Current State:</span>
                 <span className={`font-black uppercase px-2.5 py-1 rounded-lg border ${
                   selectedCourier.drivers?.verification_status === 'approved'
@@ -2647,10 +2801,10 @@ export const UserManagement = () => {
                 </span>
               </div>
 
-              <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto justify-end">
                 <button
                   onClick={() => setShowReviewModal(false)}
-                  className="px-5 py-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                  className="px-4 sm:px-5 py-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
                 >
                   Close
                 </button>
@@ -2658,20 +2812,20 @@ export const UserManagement = () => {
                 {/* Disapprove Button */}
                 <button
                   onClick={() => openDisapprovalModal(selectedCourier)}
-                  className="px-5 py-2.5 bg-rose-500/15 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-2"
+                  className="px-4 sm:px-5 py-2.5 bg-rose-500/15 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1.5 sm:gap-2"
                 >
                   <XCircle className="w-4 h-4" />
-                  <span>Disapprove / Request Fix</span>
+                  <span>Disapprove / Fix</span>
                 </button>
 
                 {/* Approve Button */}
                 {selectedCourier.drivers?.verification_status !== 'approved' && (
                   <button
                     onClick={() => handleApproveDriver(selectedCourier)}
-                    className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl transition-all shadow-lg shadow-emerald-500/25 cursor-pointer flex items-center gap-2"
+                    className="px-5 sm:px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl transition-all shadow-lg shadow-emerald-500/25 cursor-pointer flex items-center gap-1.5 sm:gap-2"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>Approve Courier Application</span>
+                    <span>Approve Application</span>
                   </button>
                 )}
               </div>
@@ -2685,8 +2839,8 @@ export const UserManagement = () => {
       {/* DISAPPROVAL & FEEDBACK MODAL */}
       {/* ========================================================= */}
       {showDisapprovalModal && disapprovalCourier && (
-        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-55 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-[2.5rem] shadow-2xl relative space-y-6">
+        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-55 flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 p-5 sm:p-8 rounded-3xl sm:rounded-[2.5rem] shadow-2xl relative space-y-5 sm:space-y-6 max-h-[94vh] overflow-y-auto">
             
             <button
               onClick={() => setShowDisapprovalModal(false)}
@@ -2777,18 +2931,18 @@ export const UserManagement = () => {
             )}
 
             {/* Action Buttons */}
-            <div className="flex items-center justify-end gap-3 pt-2">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 sm:gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => setShowDisapprovalModal(false)}
-                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer text-center"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleConfirmDisapproval}
-                className="px-6 py-2.5 bg-rose-500 hover:bg-rose-400 text-white font-black text-xs rounded-xl transition-all shadow-lg shadow-rose-500/25 cursor-pointer flex items-center gap-2"
+                className="px-6 py-2.5 bg-rose-500 hover:bg-rose-400 text-white font-black text-xs rounded-xl transition-all shadow-lg shadow-rose-500/25 cursor-pointer flex items-center justify-center gap-2"
               >
                 <XCircle className="w-4 h-4" />
                 <span>Submit Disapproval & Send Comment</span>
@@ -3351,8 +3505,8 @@ export const UserManagement = () => {
 
       {/* ADMIN MANUAL TOP-UP MODAL */}
       {showTopUpModalAdmin && selectedUser && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] shadow-2xl relative">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-3xl sm:rounded-[2.5rem] shadow-2xl relative">
             <button
               onClick={() => {
                 setShowTopUpModalAdmin(false);
@@ -3363,21 +3517,46 @@ export const UserManagement = () => {
               <X className="w-5 h-5" />
             </button>
 
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 bg-[#F2A33D]/10 text-[#F2A33D] rounded-xl flex items-center justify-center">
-                <UserPlus className="w-5 h-5" />
+            <div className="flex items-center gap-3 mb-6 pr-8">
+              <div className="w-11 h-11 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-2xl flex items-center justify-center shrink-0">
+                <Wallet className="w-6 h-6" />
               </div>
-              <h2 className="text-xl font-bold text-white">Manual Float Adjust</h2>
+              <div>
+                <h2 className="text-xl font-black text-white">Top Up Driver Float</h2>
+                <p className="text-xs text-slate-400">Credit funds directly into driver's wallet</p>
+              </div>
             </div>
 
             <form onSubmit={handleAdminTopUpSubmit} className="space-y-4 text-xs font-semibold">
-              <div className="bg-slate-950/30 border border-slate-850 p-4 rounded-2xl mb-2 text-slate-350">
-                <p>Courier: <span className="font-bold text-white">{selectedUser.full_name || 'No Name'}</span></p>
-                <p className="mt-1">Current Balance: <span className="font-bold text-emerald-400">${selectedUser.courier_wallets?.balance !== undefined ? selectedUser.courier_wallets.balance.toFixed(2) : '0.00'}</span></p>
+              <div className="bg-slate-950/30 border border-slate-850 p-4 rounded-2xl space-y-1 text-slate-350">
+                <p>Driver: <span className="font-bold text-white">{selectedUser.full_name || 'No Name'}</span> ({selectedUser.email})</p>
+                <p>Current Balance: <span className="font-bold text-emerald-400 text-sm">${selectedUser.courier_wallets?.balance !== undefined ? selectedUser.courier_wallets.balance.toFixed(2) : '0.00'}</span></p>
+                <p>Status: <span className={`font-bold uppercase text-[10px] ${selectedUser.courier_wallets?.status === 'locked' ? 'text-rose-400' : 'text-emerald-400'}`}>{selectedUser.courier_wallets?.status || 'Active'}</span></p>
+              </div>
+
+              {/* Quick presets */}
+              <div className="space-y-1.5">
+                <label className="text-slate-400 ml-1">Quick Select Amount:</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {['5.00', '10.00', '20.00', '50.00'].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setAdminTopUpAmount(amt)}
+                      className={`py-2 rounded-xl border font-bold text-xs transition-all cursor-pointer text-center ${
+                        adminTopUpAmount === amt
+                          ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/20'
+                          : 'bg-slate-850 hover:bg-slate-800 text-slate-300 border-slate-750'
+                      }`}
+                    >
+                      +${parseFloat(amt).toFixed(0)}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-400 ml-1">Adjustment Credit Amount (USD)</label>
+                <label className="text-slate-400 ml-1">Amount to Credit (USD)</label>
                 <input
                   type="number"
                   step="0.01"
@@ -3386,21 +3565,36 @@ export const UserManagement = () => {
                   placeholder="10.00"
                   value={adminTopUpAmount}
                   onChange={(e) => setAdminTopUpAmount(e.target.value)}
-                  className="w-full bg-slate-950/40 border border-slate-800 rounded-2xl py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-[#F2A33D]/40"
+                  className="w-full bg-slate-950/40 border border-slate-800 rounded-2xl py-3 px-4 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40"
                 />
               </div>
 
-              <button
-                type="submit"
-                disabled={adminTopUpLoading}
-                className="w-full bg-[#F2A33D] hover:bg-[#F2A33D]/90 text-white font-bold py-3.5 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer mt-4"
-              >
-                {adminTopUpLoading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <span>Submit Credit Adjust</span>
-                )}
-              </button>
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowTopUpModalAdmin(false);
+                    setSelectedUser(null);
+                  }}
+                  className="px-5 py-3 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={adminTopUpLoading}
+                  className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-3 rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {adminTopUpLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>Credit ${parseFloat(adminTopUpAmount || '0').toFixed(2)}</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </form>
           </div>
         </div>

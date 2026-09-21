@@ -5,6 +5,8 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../../utils/supabase';
 import { CustomerRatingModal } from '../../components/CustomerRatingModal';
+import { OfferSelectionPanel } from '../../components/OfferSelectionPanel';
+import { InAppCallModal } from '../../components/InAppCallModal';
 import { orderService } from '../../services/orderService';
 import { useAuthStore } from '../../store/authStore';
 import { chatService } from '../../services/chatService';
@@ -14,12 +16,22 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     const { user } = useAuthStore();
     const [order, setOrder] = useState<any>(null);
     const [loading, setLoading] = useState(true);
+    const [inAppCallVisible, setInAppCallVisible] = useState(false);
     const [viewingCouriers, setViewingCouriers] = useState<any[]>([]);
     const [acknowledging, setAcknowledging] = useState(false);
     const [showRatingModal, setShowRatingModal] = useState(false);
     const [ratingDismissed, setRatingDismissed] = useState(false);
     const autoPromptedRatingRef = useRef(false);
     const [unreadChatCount, setUnreadChatCount] = useState(0);
+
+    // Offers & Nearby Available Mates & inDrive Matchmaking States
+    const [offers, setOffers] = useState<any[]>([]);
+    const [offersLoading, setOffersLoading] = useState(false);
+    const [nearbyDrivers, setNearbyDrivers] = useState<any[]>([]);
+    const [searchElapsedSeconds, setSearchElapsedSeconds] = useState(0);
+    const [searchRadiusKm, setSearchRadiusKm] = useState(5);
+    const [searchPhase, setSearchPhase] = useState<'scanning' | 'expanding' | 'wide' | 'timeout'>('scanning');
+    const [boostingOffer, setBoostingOffer] = useState(false);
 
     // Cancellation & Release & Timer States
     const [cancelModalVisible, setCancelModalVisible] = useState(false);
@@ -43,11 +55,96 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                 .single();
 
             if (error) throw error;
+
+            // Defensive resolution of driver phone if null
+            if (data && data.driver_id && (!data.driver?.phone || !data.driver_phone)) {
+                let dPhone = data.driver_phone || data.driver?.phone || null;
+                if (!dPhone) {
+                    try {
+                        const { data: dProfile } = await supabase
+                            .from('drivers')
+                            .select('emergency_contact_phone')
+                            .eq('id', data.driver_id)
+                            .single();
+                        dPhone = dProfile?.emergency_contact_phone || null;
+                    } catch (dErr) {
+                        console.warn('Non-blocking: could not fetch driver emergency phone:', dErr);
+                    }
+                }
+                if (!data.driver) {
+                    data.driver = { full_name: 'Your Mate', phone: dPhone };
+                } else if (!data.driver.phone) {
+                    data.driver.phone = dPhone;
+                }
+                if (!data.driver_phone) {
+                    data.driver_phone = dPhone;
+                }
+            }
+
             setOrder(data);
         } catch (error: any) {
             console.error('Error fetching tracking order:', error.message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchOffers = async () => {
+        setOffersLoading(true);
+        try {
+            const data = await orderService.getOrderOffers(orderId);
+            setOffers(data || []);
+        } catch (error: any) {
+            console.error('Error fetching offers:', error.message);
+        } finally {
+            setOffersLoading(false);
+        }
+    };
+
+    const handleAcceptOffer = async (offer: any) => {
+        try {
+            setLoading(true);
+            await orderService.acceptOffer(orderId, offer.id, offer.driver_id);
+            alert("Mate assigned successfully! They are on their way.");
+            fetchOrder();
+        } catch (error: any) {
+            alert("Error: " + error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchNearbyDrivers = async (radius: number = searchRadiusKm) => {
+        if (!orderId) return;
+        const lat = parseFloat(order?.pickup_latitude || order?.dropoff_latitude || "-17.8248");
+        const lng = parseFloat(order?.pickup_longitude || order?.dropoff_longitude || "31.0530");
+        try {
+            const drivers = await orderService.getNearbyDrivers(lat, lng, radius);
+            setNearbyDrivers(drivers || []);
+        } catch (err) {
+            console.warn('Error fetching nearby drivers:', err);
+        }
+    };
+
+    const handleRetrySearch = () => {
+        setSearchElapsedSeconds(0);
+        setSearchPhase('scanning');
+        setSearchRadiusKm(15);
+        fetchNearbyDrivers(15);
+    };
+
+    const handleBoostOffer = async (amount: number) => {
+        if (!order) return;
+        try {
+            setBoostingOffer(true);
+            await orderService.boostOrderOffer(order.id, amount);
+            alert(`Offer Boosted! 🚀 Added +$${amount.toFixed(2)} USD tip. Nearby Mates have been alerted with the updated price!`);
+            fetchOrder();
+            setSearchElapsedSeconds((prev) => Math.max(0, prev - 25));
+        } catch (err: any) {
+            alert("Error: " + (err.message || "Failed to boost offer"));
+        } finally {
+            setBoostingOffer(false);
         }
     };
 
@@ -188,11 +285,31 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
 
     useEffect(() => {
         fetchOrder();
+        fetchOffers();
+        fetchNearbyDrivers(5);
 
         const channel = supabase
             .channel(`public:tracking_${orderId}_web`)
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` }, (payload) => {
-                setOrder((prev: any) => ({ ...prev, ...payload.new }));
+                if (payload.new?.driver_id && (!order?.driver_id || !order?.driver?.phone)) {
+                    fetchOrder();
+                } else {
+                    setOrder((prev: any) => ({ ...prev, ...payload.new }));
+                }
+            })
+            .subscribe();
+
+        const offersChannel = supabase
+            .channel(`public:offers_${orderId}_web`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers', filter: `order_id=eq.${orderId}` }, (payload) => {
+                fetchOffers();
+            })
+            .subscribe();
+
+        const driversChannel = supabase
+            .channel(`public:drivers_tracking_${orderId}_web`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, () => {
+                fetchNearbyDrivers(searchRadiusKm);
             })
             .subscribe();
 
@@ -216,11 +333,41 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
             })
             .subscribe();
 
+        // inDrive-style progressive matchmaking timer
+        const timer = setInterval(() => {
+            setSearchElapsedSeconds((prev) => {
+                const next = prev + 1;
+                if (next >= 60) {
+                    setSearchPhase('timeout');
+                    setSearchRadiusKm(25);
+                } else if (next >= 35) {
+                    setSearchPhase('wide');
+                    setSearchRadiusKm(20);
+                } else if (next >= 15) {
+                    setSearchPhase('expanding');
+                    setSearchRadiusKm(10);
+                } else {
+                    setSearchPhase('scanning');
+                    setSearchRadiusKm(5);
+                }
+                return next;
+            });
+        }, 1000);
+
+        // Polling interval to refresh nearby Mates every 10 seconds
+        const pollInterval = setInterval(() => {
+            fetchNearbyDrivers(searchRadiusKm);
+        }, 10000);
+
         return () => {
             supabase.removeChannel(channel);
+            supabase.removeChannel(offersChannel);
+            supabase.removeChannel(driversChannel);
             supabase.removeChannel(presenceChannel);
+            clearInterval(timer);
+            clearInterval(pollInterval);
         };
-    }, [orderId]);
+    }, [orderId, searchRadiusKm]);
 
     // Load initial unread count and subscribe to live messages
     useEffect(() => {
@@ -517,17 +664,127 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                         </Text>
                                     </View>
                                 ) : (
-                                    <View style={styles.viewersCard}>
-                                        <View style={styles.viewersHeader}>
-                                            <ActivityIndicator size="small" color="#F59E0B" style={{ marginRight: 8 }} />
-                                            <Text style={styles.viewersTitle}>Finding your Mate...</Text>
+                                    {searchPhase === 'timeout' && offers.length === 0 ? (
+                                        <View style={styles.timeoutCard}>
+                                            <View style={styles.timeoutHeader}>
+                                                <Text style={styles.timeoutIcon}>⏳</Text>
+                                                <View style={{ flex: 1 }}>
+                                                    <Text style={styles.timeoutTitle}>No Mates Available Nearby Right Now</Text>
+                                                    <Text style={styles.timeoutSubtitle}>
+                                                        Active couriers in this zone are currently on trips or completing deliveries.
+                                                    </Text>
+                                                </View>
+                                            </View>
+
+                                            {/* Offer Boost Action Chips */}
+                                            <Text style={styles.boostLabel}>⚡ Tip your Mate to prioritize your order:</Text>
+                                            <View style={styles.boostChipsRow}>
+                                                <TouchableOpacity 
+                                                    style={styles.boostChip} 
+                                                    onPress={() => handleBoostOffer(0.50)}
+                                                    disabled={boostingOffer}
+                                                >
+                                                    <Text style={styles.boostChipText}>+$0.50</Text>
+                                                </TouchableOpacity>
+                                                <TouchableOpacity 
+                                                    style={styles.boostChip} 
+                                                    onPress={() => handleBoostOffer(1.00)}
+                                                    disabled={boostingOffer}
+                                                >
+                                                    <Text style={styles.boostChipText}>+$1.00</Text>
+                                                </TouchableOpacity>
+                                                <TouchableOpacity 
+                                                    style={styles.boostChip} 
+                                                    onPress={() => handleBoostOffer(2.00)}
+                                                    disabled={boostingOffer}
+                                                >
+                                                    <Text style={styles.boostChipText}>+$2.00</Text>
+                                                </TouchableOpacity>
+                                            </View>
+
+                                            <View style={styles.timeoutActionsRow}>
+                                                <TouchableOpacity 
+                                                    style={styles.timeoutRetryBtn} 
+                                                    onPress={handleRetrySearch}
+                                                >
+                                                    <Text style={styles.timeoutRetryText}>🔄 Keep Searching (25 km)</Text>
+                                                </TouchableOpacity>
+                                                <TouchableOpacity 
+                                                    style={styles.timeoutCancelBtn} 
+                                                    onPress={() => setCancelModalVisible(true)}
+                                                >
+                                                    <Text style={styles.timeoutCancelText}>Cancel Free</Text>
+                                                </TouchableOpacity>
+                                            </View>
                                         </View>
-                                        <Text style={styles.viewersSubtitle}>
-                                            We are finding nearby Mates for your {isDelivery ? 'delivery' : 'errand'}.
-                                        </Text>
-                                    </View>
-                                )}
-                            </View>
+                                    ) : (
+                                        <View style={styles.viewersCard}>
+                                            <View style={styles.viewersHeader}>
+                                                <ActivityIndicator 
+                                                    size="small" 
+                                                    color={searchPhase === 'expanding' ? '#055FEE' : searchPhase === 'wide' ? '#8B5CF6' : '#F59E0B'} 
+                                                    style={{ marginRight: 8 }} 
+                                                />
+                                                <Text style={styles.viewersTitle}>
+                                                    {searchPhase === 'expanding'
+                                                        ? 'No Mates nearby yet, expanding search…'
+                                                        : searchPhase === 'wide'
+                                                        ? 'High demand in your zone — searching wider area…'
+                                                        : 'Finding your Mate...'}
+                                                </Text>
+                                            </View>
+                                            <Text style={styles.viewersSubtitle}>
+                                                {searchPhase === 'expanding'
+                                                    ? `Expanding search to 10 km • Broadcasting to ${nearbyDrivers.length > 0 ? nearbyDrivers.length : 'active'} Mates in area`
+                                                    : searchPhase === 'wide'
+                                                    ? `Broadcasting across 20 km zone • ${nearbyDrivers.length > 0 ? `${nearbyDrivers.length} Mates active` : 'Searching regional fleet'}`
+                                                    : `Searching within 5 km zone • ${nearbyDrivers.length > 0 ? `${nearbyDrivers.length} Mates active nearby` : 'Connecting to closest couriers'}`}
+                                            </Text>
+
+                                            {/* Dynamic Search Progress Track */}
+                                            <View style={styles.searchProgressBarTrack}>
+                                                <View style={[
+                                                    styles.searchProgressBarFill, 
+                                                    { 
+                                                        width: `${Math.min(100, Math.round((searchElapsedSeconds / 60) * 100))}%`,
+                                                        backgroundColor: searchPhase === 'wide' ? '#8B5CF6' : searchPhase === 'expanding' ? '#055FEE' : '#F59E0B'
+                                                    }
+                                                ]} />
+                                            </View>
+
+                                            {/* In-Flight Tip Suggestion if taking longer */}
+                                            {searchElapsedSeconds >= 20 && (
+                                                <View style={styles.quickTipBanner}>
+                                                    <Text style={styles.quickTipText}>
+                                                        💡 Tip: Tap <Text style={{ fontWeight: '700' }}>+$1.00</Text> to attract Mates faster during peak hours:
+                                                    </Text>
+                                                    <View style={styles.quickTipChips}>
+                                                        <TouchableOpacity 
+                                                            style={styles.quickTipBtn} 
+                                                            onPress={() => handleBoostOffer(1.00)}
+                                                            disabled={boostingOffer}
+                                                        >
+                                                            <Text style={styles.quickTipBtnText}>+$1.00 Boost</Text>
+                                                        </TouchableOpacity>
+                                                        <TouchableOpacity 
+                                                            style={styles.quickTipBtn} 
+                                                            onPress={() => handleBoostOffer(2.00)}
+                                                            disabled={boostingOffer}
+                                                        >
+                                                            <Text style={styles.quickTipBtnText}>+$2.00</Text>
+                                                        </TouchableOpacity>
+                                                    </View>
+                                                </View>
+                                            )}
+                                        </View>
+                                    )}
+
+                                    <OfferSelectionPanel 
+                                        offers={offers}
+                                        onAccept={handleAcceptOffer}
+                                        loading={offersLoading}
+                                    />
+                                </View>
                         ) : (order.status === 'delivered' || order.status === 'completed') ? (
                             <View style={styles.acknowledgementContainer}>
                                 <Text style={styles.acknowledgementHeader}>
@@ -615,13 +872,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                 <View style={styles.communicationButtons}>
                                     <TouchableOpacity 
                                         style={styles.contactBtn}
-                                        onPress={() => {
-                                            if (order.driver?.phone) {
-                                                Linking.openURL(`tel:${order.driver.phone}`);
-                                            } else {
-                                                alert("Mate's phone number is not available.");
-                                            }
-                                        }}
+                                        onPress={() => setInAppCallVisible(true)}
                                     >
                                         <Text style={styles.contactIcon}>📞</Text>
                                     </TouchableOpacity>
@@ -673,6 +924,18 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                 driverName={driverName}
                 submitting={acknowledging}
             />
+
+            {order && user && (
+                <InAppCallModal
+                    visible={inAppCallVisible}
+                    orderId={order.id}
+                    callerId={user.id}
+                    callerRole="customer"
+                    targetName={driverName}
+                    targetRole="driver"
+                    onClose={() => setInAppCallVisible(false)}
+                />
+            )}
 
             {/* Cancel Order Modal with Distance-Based Fee Preview */}
             <Modal
@@ -1605,4 +1868,131 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '800',
     },
+    // Nearby Mates & Matchmaking Styles
+    searchProgressBarTrack: {
+        height: 4,
+        backgroundColor: '#E2E8F0',
+        borderRadius: 2,
+        marginTop: 10,
+        overflow: 'hidden',
+    },
+    searchProgressBarFill: {
+        height: '100%',
+        borderRadius: 2,
+    },
+    quickTipBanner: {
+        marginTop: 12,
+        backgroundColor: '#F8FAFC',
+        borderRadius: 12,
+        padding: 10,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    quickTipText: {
+        fontSize: 12,
+        color: '#475569',
+        marginBottom: 8,
+    },
+    quickTipChips: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    quickTipBtn: {
+        backgroundColor: '#055FEE',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+    },
+    quickTipBtnText: {
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    timeoutCard: {
+        backgroundColor: '#FFFBEB',
+        borderRadius: 18,
+        padding: 16,
+        borderWidth: 1.5,
+        borderColor: '#FDE68A',
+        marginBottom: 8,
+    },
+    timeoutHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 10,
+        marginBottom: 12,
+    },
+    timeoutIcon: {
+        fontSize: 24,
+    },
+    timeoutTitle: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#92400E',
+        marginBottom: 3,
+    },
+    timeoutSubtitle: {
+        fontSize: 12,
+        color: '#B45309',
+        lineHeight: 16,
+    },
+    boostLabel: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#78350F',
+        marginBottom: 8,
+    },
+    boostChipsRow: {
+        flexDirection: 'row',
+        gap: 8,
+        marginBottom: 14,
+    },
+    boostChip: {
+        flex: 1,
+        backgroundColor: '#F59E0B',
+        borderRadius: 10,
+        paddingVertical: 8,
+        alignItems: 'center',
+        shadowColor: '#F59E0B',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 3,
+        elevation: 2,
+    },
+    boostChipText: {
+        color: '#FFFFFF',
+        fontSize: 13,
+        fontWeight: '800',
+    },
+    timeoutActionsRow: {
+        flexDirection: 'row',
+        gap: 10,
+    },
+    timeoutRetryBtn: {
+        flex: 1.6,
+        backgroundColor: '#055FEE',
+        borderRadius: 12,
+        paddingVertical: 12,
+        alignItems: 'center',
+    },
+    timeoutRetryText: {
+        color: '#FFFFFF',
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    timeoutCancelBtn: {
+        flex: 1,
+        backgroundColor: '#F1F5F9',
+        borderRadius: 12,
+        paddingVertical: 12,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#CBD5E1',
+    },
+    timeoutCancelText: {
+        color: '#DC2626',
+        fontSize: 13,
+        fontWeight: '700',
+    },
 });
+

@@ -112,7 +112,7 @@ serve(async (req: Request) => {
             }
 
             callRecipientId = driver?.id || null;
-            callRecipientPhone = driver?.phone || null;
+            callRecipientPhone = driver?.phone || order.driver_phone || null;
             callTriggerEvent = 'auto_cancellation';
 
         } else if (event_type === 'release') {
@@ -128,7 +128,7 @@ serve(async (req: Request) => {
             pushBody = `Your previous Mate had to release this delivery (${formattedReason}). We have automatically prioritized your delivery and reopened it for nearby Mates to bid.`;
 
             callRecipientId = customer?.id || null;
-            callRecipientPhone = customer?.phone || null;
+            callRecipientPhone = customer?.phone || order.customer_phone || order.payment_phone || order.recipient_phone || null;
             callTriggerEvent = 'auto_release';
         }
 
@@ -197,9 +197,14 @@ serve(async (req: Request) => {
             }
 
             // Single unified logging path into masked_call_logs
+            const callerPhone = actor_role === 'driver' 
+                ? (order.driver_phone || driver?.phone) 
+                : (order.customer_phone || customer?.phone || order.payment_phone);
+
             const { error: logErr } = await supabase.from('masked_call_logs').insert([{
                 order_id: order_id,
                 caller_id: actor_role === 'driver' ? driver?.id : customer?.id,
+                caller_phone: callerPhone || null,
                 caller_role: 'system',
                 recipient_id: callRecipientId,
                 recipient_phone: callRecipientPhone,

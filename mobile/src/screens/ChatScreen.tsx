@@ -19,6 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useAuthStore } from '../store/authStore';
 import { chatService, ChatMessage } from '../services/chatService';
+import { InAppCallModal } from '../components/InAppCallModal';
 
 export const ChatScreen = ({ route, navigation }: any) => {
     const { orderId, recipientName, recipientPhone } = route.params || {};
@@ -28,6 +29,7 @@ export const ChatScreen = ({ route, navigation }: any) => {
     const [inputText, setInputText] = useState('');
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
+    const [inAppCallVisible, setInAppCallVisible] = useState(false);
     
     const flatListRef = useRef<FlatList>(null);
 
@@ -119,20 +121,8 @@ export const ChatScreen = ({ route, navigation }: any) => {
         }
     };
 
-    const handleCall = async () => {
-        if (recipientPhone) {
-            const url = `tel:${recipientPhone}`;
-            try {
-                const supported = await Linking.canOpenURL(url);
-                if (supported) {
-                    await Linking.openURL(url);
-                } else {
-                    Alert.alert('Error', 'Calling is not supported on this device.');
-                }
-            } catch (error) {
-                Alert.alert('Error', 'Unable to initiate call.');
-            }
-        }
+    const handleCall = () => {
+        setInAppCallVisible(true);
     };
 
     const renderMessageItem = ({ item }: { item: ChatMessage }) => {
@@ -274,6 +264,18 @@ export const ChatScreen = ({ route, navigation }: any) => {
                     </BlurView>
                 </KeyboardAvoidingView>
             </SafeAreaView>
+
+            {orderId && user && (
+                <InAppCallModal
+                    visible={inAppCallVisible}
+                    orderId={orderId}
+                    callerId={user.id}
+                    callerRole={isDriver ? 'driver' : 'customer'}
+                    targetName={recipientName || (isDriver ? 'Customer' : 'Courier')}
+                    targetRole={isDriver ? 'customer' : 'driver'}
+                    onClose={() => setInAppCallVisible(false)}
+                />
+            )}
         </LinearGradient>
     );
 };

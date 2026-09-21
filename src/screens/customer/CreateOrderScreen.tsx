@@ -531,9 +531,9 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                 customer_id: user.id,
                 service_type: serviceType,
                 status: 'pending',
-                pickup_address: isDelivery ? pickupAddress : null,
-                pickup_latitude: isDelivery ? pickupCoords?.latitude : null,
-                pickup_longitude: isDelivery ? pickupCoords?.longitude : null,
+                pickup_address: isDelivery ? pickupAddress : errandLocation,
+                pickup_latitude: isDelivery ? (pickupCoords?.latitude ?? null) : (errandCoords?.latitude ?? null),
+                pickup_longitude: isDelivery ? (pickupCoords?.longitude ?? null) : (errandCoords?.longitude ?? null),
                 dropoff_address: dropoffAddress,
                 dropoff_latitude: dropoffCoords?.latitude,
                 dropoff_longitude: dropoffCoords?.longitude,
@@ -789,7 +789,8 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                                     onPress={() => navigation.navigate('MapLocationPicker', { 
                                                         locationType: 'pickup', 
                                                         serviceType,
-                                                        initialAddress: pickupAddress 
+                                                        initialAddress: pickupAddress,
+                                                        initialCoordinate: pickupCoords
                                                     })}
                                                 >
                                                     <Ionicons name="map" size={16} color="#055FEE" />
@@ -840,7 +841,8 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                                     onPress={() => navigation.navigate('MapLocationPicker', { 
                                                         locationType: 'dropoff', 
                                                         serviceType,
-                                                        initialAddress: dropoffAddress 
+                                                        initialAddress: dropoffAddress,
+                                                        initialCoordinate: dropoffCoords
                                                     })}
                                                 >
                                                     <Ionicons name="map" size={16} color="#055FEE" />
@@ -936,7 +938,8 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                                     onPress={() => navigation.navigate('MapLocationPicker', { 
                                                         locationType: 'store', 
                                                         serviceType,
-                                                        initialAddress: errandLocation 
+                                                        initialAddress: errandLocation,
+                                                        initialCoordinate: errandCoords
                                                     })}
                                                 >
                                                     <Ionicons name="map" size={16} color="#055FEE" />
@@ -987,7 +990,8 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                                                     onPress={() => navigation.navigate('MapLocationPicker', { 
                                                         locationType: 'dropoff', 
                                                         serviceType,
-                                                        initialAddress: dropoffAddress 
+                                                        initialAddress: dropoffAddress,
+                                                        initialCoordinate: dropoffCoords
                                                     })}
                                                 >
                                                     <Ionicons name="map" size={16} color="#055FEE" />

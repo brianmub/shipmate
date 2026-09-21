@@ -18,3 +18,4 @@ web-build/
 .metadata
 scratch/
 *.zip
+*.tar.gz

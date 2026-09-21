@@ -8,7 +8,7 @@
   --color-brand-navy: #0B1F4D;
   --color-brand-blue: #2D5FE0;
   --color-brand-orange: #F2A33D;
-  --color-brand-bg-light: #F5F7FA;
+  --color-brand-bg-light: #F8FAFC;
   
   /* Override Tailwind emerald classes to match the royal blue branding colors */
   --color-emerald-500: #2D5FE0;
@@ -16,10 +16,166 @@
   --color-emerald-600: #1C48B5;
 }
 
+/* Base Body Styles */
 html, body, #root {
   margin: 0;
   padding: 0;
   width: 100%;
-  height: 100%;
-  background-color: #172029;
+  min-height: 100%;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+html.dark, html.dark body, html.dark #root {
+  background-color: #0F172A;
+  color: #F8FAFC;
+  color-scheme: dark;
+}
+
+/* ============================================================ */
+/* LIGHT MODE DESIGN SYSTEM OVERRIDES */
+/* ============================================================ */
+html.light {
+  color-scheme: light;
+}
+
+html.light, html.light body, html.light #root {
+  background-color: #F8FAFC;
+  color: #0F172A;
+}
+
+/* Backgrounds */
+html.light .bg-slate-900,
+html.light .bg-\[\#0F172A\] {
+  background-color: #F8FAFC !important;
+  color: #0F172A !important;
+}
+
+html.light .bg-slate-900\/60,
+html.light .bg-slate-900\/40,
+html.light .bg-slate-900\/30,
+html.light .bg-slate-900\/90 {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+
+/* Surface & Card Containers */
+html.light .bg-slate-800,
+html.light .bg-slate-850,
+html.light .bg-slate-800\/50,
+html.light .bg-slate-800\/40,
+html.light .bg-slate-800\/60 {
+  background-color: #FFFFFF !important;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.06), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+}
+
+html.light .bg-slate-950\/20,
+html.light .bg-slate-950\/30,
+html.light .bg-slate-950\/40,
+html.light .bg-slate-950\/50,
+html.light .bg-slate-850\/20,
+html.light .bg-slate-850\/30,
+html.light .bg-slate-850\/40,
+html.light .bg-slate-850\/50 {
+  background-color: #F1F5F9 !important;
+}
+
+html.light .hover\:bg-slate-800:hover,
+html.light .hover\:bg-slate-850:hover,
+html.light .hover\:bg-slate-850\/15:hover {
+  background-color: #F1F5F9 !important;
+}
+
+/* Borders */
+html.light .border-slate-800,
+html.light .border-slate-850,
+html.light .border-slate-700,
+html.light .border-slate-750,
+html.light .border-slate-800\/80 {
+  border-color: #E2E8F0 !important;
+}
+
+html.light .divide-slate-850 > :not([hidden]) ~ :not([hidden]),
+html.light .divide-slate-800 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #E2E8F0 !important;
+}
+
+/* Typography in Light Mode */
+html.light .text-white:not([class*="bg-"]):not(button):not(a[class*="bg-"]) {
+  color: #0F172A !important;
+}
+
+html.light .text-slate-100:not([class*="bg-"]):not(button) {
+  color: #0F172A !important;
+}
+
+html.light .text-slate-200:not([class*="bg-"]):not(button) {
+  color: #1E293B !important;
+}
+
+html.light .text-slate-300:not([class*="bg-"]):not(button) {
+  color: #334155 !important;
+}
+
+html.light .text-slate-400:not([class*="bg-"]):not(button) {
+  color: #64748B !important;
+}
+
+html.light .text-slate-500:not([class*="bg-"]):not(button) {
+  color: #64748B !important;
+}
+
+/* Ensure buttons and badges with solid backgrounds always retain white text */
+html.light .bg-brand-blue,
+html.light .bg-brand-blue *,
+html.light .bg-blue-600,
+html.light .bg-blue-600 *,
+html.light .bg-emerald-500,
+html.light .bg-emerald-600,
+html.light .bg-rose-500,
+html.light .bg-rose-600,
+html.light button.bg-brand-blue,
+html.light button.bg-blue-600,
+html.light button.bg-emerald-500,
+html.light button.bg-rose-500 {
+  color: #FFFFFF !important;
+}
+
+/* Scrollbar utilities */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Navigation & Sidebar in Light Mode */
+html.light aside {
+  background-color: #FFFFFF !important;
+  border-color: #E2E8F0 !important;
+}
+
+html.light header {
+  background-color: rgba(255, 255, 255, 0.88) !important;
+  border-color: #E2E8F0 !important;
+}
+
+/* Inputs & Form Controls */
+html.light input,
+html.light select,
+html.light textarea {
+  color: #0F172A !important;
+  background-color: #FFFFFF !important;
+  border-color: #CBD5E1 !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #94A3B8 !important;
+}
+
+/* Modals & Backdrop */
+html.light .bg-slate-950\/90,
+html.light .bg-slate-950\/80,
+html.light .bg-slate-950\/70 {
+  background-color: rgba(15, 23, 42, 0.4) !important;
 }

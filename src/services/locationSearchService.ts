@@ -242,5 +242,110 @@ export const locationSearchService = {
 
         // Default to Harare Central coordinates if resolution fails
         return { latitude: -17.8248, longitude: 31.0530 };
+    },
+
+    /**
+     * Reverse-geocode latitude and longitude into human-readable street and suburb labels
+     * Multi-tier strategy:
+     * 1. Check nearby Harare landmarks within 250m for prominent contextual names (e.g. Joina City)
+     * 2. Try Google Geocoding API if key is present
+     * 3. Try Expo Location reverse geocoding (native devices)
+     * 4. Fallback to OpenStreetMap Nominatim reverse API
+     * 5. Clean coordinates fallback
+     */
+    async reverseGeocode(latitude: number, longitude: number): Promise<{ fullAddress: string; mainText: string; secondaryText: string }> {
+        // Fast helper: Haversine distance in meters
+        const getDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+            const R = 6371000;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        };
+
+        // 1. Check if user is right next to a famous landmark (< 250m)
+        for (const landmark of ZIMBABWE_POPULAR_LANDMARKS) {
+            if (landmark.latitude && landmark.longitude) {
+                const dist = getDistanceMeters(latitude, longitude, landmark.latitude, landmark.longitude);
+                if (dist <= 250) {
+                    return {
+                        fullAddress: landmark.fullAddress,
+                        mainText: landmark.mainText,
+                        secondaryText: landmark.secondaryText,
+                    };
+                }
+            }
+        }
+
+        // 2. Google Reverse Geocoding API if configured
+        if (GOOGLE_MAPS_KEY) {
+            try {
+                const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_KEY}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.status === 'OK' && data.results && data.results.length > 0) {
+                    const first = data.results[0];
+                    const full = first.formatted_address;
+                    const parts = full.split(',');
+                    const main = parts[0]?.trim() || 'Selected Location';
+                    const secondary = parts.slice(1).join(',').trim() || 'Harare, Zimbabwe';
+                    return { fullAddress: full, mainText: main, secondaryText: secondary };
+                }
+            } catch (err) {
+                console.warn('Google reverse geocode failed:', err);
+            }
+        }
+
+        // 3. Expo Location reverse geocode (Native iOS / Android)
+        try {
+            if (typeof Location.reverseGeocodeAsync === 'function') {
+                const results = await Location.reverseGeocodeAsync({ latitude, longitude });
+                if (results && results.length > 0) {
+                    const r = results[0];
+                    const streetLine = [r.streetNumber, r.street || r.name].filter(Boolean).join(' ');
+                    const areaLine = [r.district || r.subregion, r.city, r.country].filter(Boolean).join(', ');
+                    const mainText = streetLine || r.name || r.district || 'Current Location';
+                    const secondaryText = areaLine || 'Harare, Zimbabwe';
+                    const fullAddress = [mainText, secondaryText].filter(Boolean).join(', ');
+                    if (streetLine || r.city) {
+                        return { fullAddress, mainText, secondaryText };
+                    }
+                }
+            }
+        } catch (err) {
+            // Expo reverse geocode might fail on web or simulators without network geocoder
+        }
+
+        // 4. OpenStreetMap Nominatim reverse geocode fallback
+        try {
+            const osmUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`;
+            const osmRes = await fetch(osmUrl, {
+                headers: { 'User-Agent': 'ShipMate-App/1.0' }
+            });
+            const osmData = await osmRes.json();
+            if (osmData && osmData.address) {
+                const addr = osmData.address;
+                const road = addr.road || addr.pedestrian || addr.suburb || addr.neighbourhood;
+                const building = addr.house_number ? `${addr.house_number} ` : '';
+                const main = road ? `${building}${road}` : (osmData.name || 'Selected Point');
+                const suburb = addr.suburb || addr.neighbourhood || addr.city_district || addr.district;
+                const city = addr.city || addr.town || addr.state || 'Harare';
+                const secondary = [suburb, city, 'Zimbabwe'].filter(Boolean).join(', ');
+                const full = `${main}, ${secondary}`;
+                return { fullAddress: full, mainText: main, secondaryText: secondary };
+            }
+        } catch (err) {
+            console.warn('OSM reverse geocode fallback failed:', err);
+        }
+
+        // 5. Default coordinate label
+        const coordLabel = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+        return {
+            fullAddress: `Location at ${coordLabel}`,
+            mainText: `Pin (${coordLabel})`,
+            secondaryText: 'Harare, Zimbabwe',
+        };
     }
 };

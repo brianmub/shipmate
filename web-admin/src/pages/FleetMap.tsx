@@ -79,25 +79,49 @@ export const FleetMap = () => {
                         <div className="w-1/2 h-[2px] bg-gradient-to-r from-transparent to-emerald-500/50 origin-left animate-[spin_4s_linear_infinite]"></div>
                     </div>
 
-                    {/* Driver Dots (Simulated Positions for now) */}
+                    {/* Driver Dots (Real GPS Positions & Status) */}
                     <div className="absolute inset-0">
-                        {drivers.map((driver, index) => (
-                            <div 
-                                key={driver.id}
-                                className="absolute group cursor-pointer"
-                                style={{ 
-                                    left: `${30 + (index * 15) % 60}%`, 
-                                    top: `${20 + (index * 25) % 60}%` 
-                                }}
-                            >
-                                <div className={`w-4 h-4 rounded-full ${driver.is_online ? 'bg-emerald-500' : 'bg-slate-500'} animate-pulse shadow-[0_0_15px_rgba(16,185,129,0.5)]`}></div>
-                                {/* Tooltip */}
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-32 bg-slate-800 border border-slate-700 p-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                                    <p className="text-white text-xs font-bold truncate">{driver.user?.full_name}</p>
-                                    <p className="text-[10px] text-slate-400 capitalize">{driver.verification_status}</p>
+                        {drivers.map((driver, index) => {
+                            const centerLat = -17.8248;
+                            const centerLng = 31.0530;
+                            let left = 30 + (index * 15) % 60;
+                            let top = 20 + (index * 25) % 60;
+
+                            if (driver.current_latitude && driver.current_longitude) {
+                                const latDiff = (driver.current_latitude - centerLat) / 0.12;
+                                const lngDiff = (driver.current_longitude - centerLng) / 0.12;
+                                left = Math.max(8, Math.min(92, 50 + lngDiff * 40));
+                                top = Math.max(8, Math.min(92, 50 - latDiff * 40));
+                            }
+
+                            return (
+                                <div 
+                                    key={driver.id}
+                                    className="absolute group cursor-pointer -translate-x-1/2 -translate-y-1/2"
+                                    style={{ 
+                                        left: `${left}%`, 
+                                        top: `${top}%` 
+                                    }}
+                                >
+                                    <div className={`w-4 h-4 rounded-full ${driver.is_online ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.7)] animate-pulse' : 'bg-slate-500'} border-2 border-slate-900`}></div>
+                                    {/* Tooltip */}
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-44 bg-slate-800 border border-slate-700 p-2.5 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl">
+                                        <p className="text-white text-xs font-bold truncate">{driver.user?.full_name || 'Courier'}</p>
+                                        <div className="flex items-center justify-between mt-1 text-[10px]">
+                                            <span className={`capitalize font-semibold ${driver.is_online ? 'text-emerald-400' : 'text-slate-400'}`}>
+                                                {driver.is_online ? '● Online' : '○ Offline'}
+                                            </span>
+                                            <span className="text-slate-400">{driver.tier || 'Standard'}</span>
+                                        </div>
+                                        {driver.current_latitude && driver.current_longitude && (
+                                            <p className="text-[9px] text-slate-400 mt-1 font-mono">
+                                                {driver.current_latitude.toFixed(4)}, {driver.current_longitude.toFixed(4)}
+                                            </p>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
 
                     <div className="absolute bottom-8 left-8 bg-slate-900/80 backdrop-blur-md border border-slate-700 p-4 rounded-2xl flex gap-6 text-xs font-bold uppercase tracking-widest">

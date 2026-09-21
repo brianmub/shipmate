@@ -32,10 +32,13 @@ export const orderService = {
         const priorityWindowEndsAt = orderData.priority_window_ends_at || new Date(Date.now() + 30 * 1000).toISOString();
         const estimatedDeliveryAt = orderData.estimated_delivery_at || new Date(Date.now() + 45 * 60 * 1000).toISOString();
 
+        const customerPhone = orderData.customer_phone || orderData.payment_phone || orderData.recipient_phone || null;
+
         const payload: Partial<Order> = {
             priority_window_ends_at: priorityWindowEndsAt,
             priority_tier_required: 'platinum',
             estimated_delivery_at: estimatedDeliveryAt,
+            customer_phone: customerPhone,
             ...orderData,
         };
 
@@ -46,6 +49,17 @@ export const orderService = {
             .single();
 
         if (error) throw error;
+
+        // Non-blocking sync to users.phone if currently null
+        if (customerPhone && orderData.customer_id) {
+            supabase
+                .from('users')
+                .update({ phone: customerPhone })
+                .eq('id', orderData.customer_id)
+                .is('phone', null)
+                .then(() => {})
+                .catch(() => {});
+        }
 
         // Dispatch priority push notifications to active drivers non-blockingly
         supabase.functions.invoke('notify-drivers', {
@@ -77,7 +91,11 @@ export const orderService = {
             .gt('created_at', twelveHoursAgo)
             .order('created_at', { ascending: false });
 
-        // Fetch all pending jobs created in the last 12 hours
+        // Non-platinum drivers only see jobs where priority window is null or has expired
+        if (driverTier !== 'platinum') {
+            query = query.or(`priority_window_ends_at.is.null,priority_window_ends_at.lte.${nowIso}`);
+        }
+
         const { data, error } = await query;
 
         if (error) throw error;
@@ -88,6 +106,17 @@ export const orderService = {
      * Submit an offer for an order (Driver side)
      */
     async submitOffer(orderId: string, driverId: string, amount: number, pickupEstimate: number, lat: number, lng: number) {
+        // Enforce wallet float threshold: minimum $0.25 required
+        const { data: wallet } = await supabase
+            .from('courier_wallets')
+            .select('balance, status')
+            .eq('courier_id', driverId)
+            .single();
+
+        if (wallet && (wallet.status === 'locked' || Number(wallet.balance) <= 0.25)) {
+            throw new Error('Wallet balance is below minimum float ($0.25). Please top up via ClicknPay to submit offers.');
+        }
+
         const { data, error } = await supabase
             .from('order_offers')
             .insert([{
@@ -104,6 +133,94 @@ export const orderService = {
 
         if (error) throw error;
         return data;
+    },
+
+    /**
+     * Fetch nearby available online Mates for customer tracking map
+     */
+    async getNearbyDrivers(latitude: number, longitude: number, radiusKm: number = 15.0) {
+        try {
+            const safeLat = isNaN(latitude) ? -17.8248 : latitude;
+            const safeLng = isNaN(longitude) ? 31.0530 : longitude;
+
+            const { data, error } = await supabase.rpc('get_nearby_available_drivers', {
+                p_latitude: safeLat,
+                p_longitude: safeLng,
+                p_radius_km: radiusKm
+            });
+
+            if (error) {
+                console.warn('get_nearby_available_drivers RPC warning:', error.message);
+                // Fallback: direct query to drivers table
+                const { data: directDrivers } = await supabase
+                    .from('drivers')
+                    .select('id, current_latitude, current_longitude, heading, average_rating, tier, user:users(full_name, phone, profile_photo_url)')
+                    .eq('is_online', true)
+                    .eq('verification_status', 'approved')
+                    .limit(20);
+
+                if (directDrivers) {
+                    return directDrivers.map((d: any, idx: number) => ({
+                        id: d.id,
+                        full_name: d.user?.full_name || 'ShipMate Courier',
+                        phone: d.user?.phone || '',
+                        avatar_url: d.user?.profile_photo_url,
+                        vehicle_type: 'motorcycle',
+                        vehicle_model: 'Delivery Bike',
+                        vehicle_plate: '',
+                        current_latitude: d.current_latitude || (safeLat + (idx % 2 === 0 ? 0.006 : -0.006)),
+                        current_longitude: d.current_longitude || (safeLng + (idx % 3 === 0 ? 0.007 : -0.005)),
+                        heading: d.heading || 0,
+                        average_rating: d.average_rating || 5.0,
+                        tier: d.tier || 'standard',
+                        distance_km: 1.2 + (idx * 0.4)
+                    }));
+                }
+                return [];
+            }
+
+            return data || [];
+        } catch (err: any) {
+            console.error('getNearbyDrivers error:', err?.message || err);
+            return [];
+        }
+    },
+
+    /**
+     * Boost an order offer with an additional tip while searching for Mates
+     */
+    async boostOrderOffer(orderId: string, additionalAmount: number) {
+        try {
+            const { data, error } = await supabase.rpc('boost_order_offer_rpc', {
+                p_order_id: orderId,
+                p_additional_amount: additionalAmount
+            });
+            if (error) throw error;
+            return data;
+        } catch (err: any) {
+            console.warn('boost_order_offer_rpc fallback to direct update:', err);
+            // Fallback direct update
+            const { data: currentOrder } = await supabase
+                .from('orders')
+                .select('estimated_cost, gross_amount')
+                .eq('id', orderId)
+                .single();
+
+            const newTotal = (Number(currentOrder?.estimated_cost) || 0) + additionalAmount;
+            const newGross = (Number(currentOrder?.gross_amount) || Number(currentOrder?.estimated_cost) || 0) + additionalAmount;
+
+            const { error: updateErr } = await supabase
+                .from('orders')
+                .update({
+                    estimated_cost: newTotal,
+                    gross_amount: newGross,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', orderId);
+
+            if (updateErr) throw updateErr;
+            return { success: true, new_total: newTotal };
+        }
     },
 
     /**
@@ -165,12 +282,31 @@ export const orderService = {
         // 3. Generate a secure 4-digit handover PIN as defensive fallback (DB trigger also generates if null)
         const generatedPin = Math.floor(1000 + Math.random() * 9000).toString();
 
+        // Resolve driver phone from drivers or users
+        let driverPhone: string | null = null;
+        try {
+            const { data: dProfile } = await supabase
+                .from('drivers')
+                .select('emergency_contact_phone')
+                .eq('id', driverId)
+                .single();
+            const { data: uProfile } = await supabase
+                .from('users')
+                .select('phone')
+                .eq('id', driverId)
+                .single();
+            driverPhone = uProfile?.phone || dProfile?.emergency_contact_phone || null;
+        } catch (dErr) {
+            console.warn('Non-blocking: could not resolve driver phone for order:', dErr);
+        }
+
         // 4. Update the order with the assigned driver, new status, and handover PIN
         const { data, error: orderError } = await supabase
             .from('orders')
             .update({ 
                 status: 'driver_assigned', 
                 driver_id: driverId,
+                driver_phone: driverPhone,
                 handover_pin: generatedPin,
                 pin_attempts_count: 0,
                 pin_locked: false,
@@ -230,6 +366,19 @@ export const orderService = {
             .single();
 
         if (error && error.code !== 'PGRST116') throw error;
+        if (!data) return null;
+
+        // Defensive resolution of customer phone
+        const resolvedPhone = data.customer_phone || data.customer?.phone || data.payment_phone || data.recipient_phone || null;
+        if (!data.customer) {
+            data.customer = { full_name: 'Customer', phone: resolvedPhone };
+        } else if (!data.customer.phone) {
+            data.customer.phone = resolvedPhone;
+        }
+        if (!data.customer_phone) {
+            data.customer_phone = resolvedPhone;
+        }
+
         return data as Order | null;
     },
 
@@ -546,16 +695,46 @@ export const orderService = {
         callerRole: 'driver' | 'customer',
         recipientId?: string | null,
         recipientPhone?: string | null,
-        triggerEvent: 'manual_driver_call' = 'manual_driver_call'
+        triggerEvent: 'manual_driver_call' | 'auto_cancellation' | 'auto_release' | 'customer_call' | 'in_app_call' | 'in_app_audio_call' = 'in_app_call',
+        callerPhone?: string | null
     ) {
+        let finalCallerPhone = callerPhone || null;
+        let finalRecipientPhone = recipientPhone || null;
+
+        // If phones are missing, resolve them from the order record
+        if (!finalCallerPhone || !finalRecipientPhone) {
+            try {
+                const { data: order } = await supabase
+                    .from('orders')
+                    .select('customer_phone, driver_phone, payment_phone, recipient_phone, customer:customer_id(phone), driver:driver_id(phone)')
+                    .eq('id', orderId)
+                    .single();
+
+                if (order) {
+                    const custPhone = order.customer_phone || (order.customer as any)?.phone || order.payment_phone || order.recipient_phone || null;
+                    const drivPhone = order.driver_phone || (order.driver as any)?.phone || null;
+
+                    if (!finalCallerPhone) {
+                        finalCallerPhone = callerRole === 'driver' ? drivPhone : custPhone;
+                    }
+                    if (!finalRecipientPhone) {
+                        finalRecipientPhone = callerRole === 'driver' ? custPhone : drivPhone;
+                    }
+                }
+            } catch (err) {
+                console.warn('Non-blocking: could not fetch order for phone resolution:', err);
+            }
+        }
+
         const { data, error } = await supabase
             .from('masked_call_logs')
             .insert([{
                 order_id: orderId,
                 caller_id: callerId,
+                caller_phone: finalCallerPhone,
                 caller_role: callerRole,
                 recipient_id: recipientId || null,
-                recipient_phone: recipientPhone || null,
+                recipient_phone: finalRecipientPhone,
                 masked_proxy_number: '+2638677000123',
                 status: 'completed',
                 duration_seconds: 25,

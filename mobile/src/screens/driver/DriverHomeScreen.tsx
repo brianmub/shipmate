@@ -1,13 +1,13 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Switch, ScrollView, TouchableOpacity, StatusBar, Platform, Alert, Modal, ActivityIndicator, Linking, Image } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Switch, ScrollView, TouchableOpacity, StatusBar, Platform, Alert, Modal, ActivityIndicator, Linking, Image, AppState, AppStateStatus } from 'react-native';
 import MapView, { Circle, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import { useAuthStore } from '../../store/authStore';
 
-import { useEffect } from 'react';
 import { userService } from '../../services/userService';
 import { orderService } from '../../services/orderService';
 import { supabase } from '../../utils/supabase';
@@ -60,6 +60,9 @@ export const DriverHomeScreen = ({ navigation }: any) => {
     const [walletStatus, setWalletStatus] = useState<string>('active');
     const [loading, setLoading] = useState(true);
     const [selectedTutorialVideo, setSelectedTutorialVideo] = useState<any>(null);
+
+    const isLockedOut = (walletBalance !== null && walletBalance <= 0.25) || walletStatus === 'locked';
+    const isLowBalance = !isLockedOut && walletBalance !== null && walletBalance <= 3.00;
 
     const tutorialVideos = [
         {
@@ -134,18 +137,20 @@ export const DriverHomeScreen = ({ navigation }: any) => {
 
             const walletData = await userService.getCourierWallet(user.id);
             if (walletData) {
-                setWalletBalance(walletData.balance);
+                const currentBalance = typeof walletData.balance === 'number' ? walletData.balance : parseFloat(walletData.balance || 0);
+                setWalletBalance(currentBalance);
                 setWalletStatus(walletData.status);
-                if (walletData.status === 'locked') {
+                const locked = currentBalance <= 0.25 || walletData.status === 'locked';
+                if (locked) {
                     setIsOnline(false);
-                    if (data.is_online) {
+                    if (data?.is_online) {
                         await userService.toggleOnlineStatus(user.id, false);
                     }
                 } else {
-                    setIsOnline(data.is_online ?? true);
+                    setIsOnline(data?.is_online ?? true);
                 }
             } else {
-                setIsOnline(data.is_online ?? true);
+                setIsOnline(data?.is_online ?? true);
             }
         } catch (error) {
             console.error('Error fetching driver profile:', error);
@@ -153,6 +158,50 @@ export const DriverHomeScreen = ({ navigation }: any) => {
             setLoading(false);
         }
     };
+
+    // AppState listener: re-verify wallet balance on app resume / returning to foreground
+    useEffect(() => {
+        const handleAppStateChange = (nextAppState: AppStateStatus) => {
+            if (nextAppState === 'active') {
+                fetchData();
+            }
+        };
+        const subscription = AppState.addEventListener('change', handleAppStateChange);
+        return () => {
+            subscription.remove();
+        };
+    }, [user?.id]);
+
+    // Real-time listener on courier_wallets for instant updates on top-up or deductions
+    useEffect(() => {
+        if (!user) return;
+        const walletChannel = supabase
+            .channel(`public:courier_wallet_${user.id}`)
+            .on('postgres_changes', {
+                event: '*',
+                schema: 'public',
+                table: 'courier_wallets',
+                filter: `courier_id=eq.${user.id}`
+            }, (payload: any) => {
+                if (payload.new) {
+                    const newBal = typeof payload.new.balance === 'number' 
+                        ? payload.new.balance 
+                        : parseFloat(payload.new.balance || 0);
+                    const newStat = payload.new.status;
+                    setWalletBalance(newBal);
+                    setWalletStatus(newStat);
+                    if (newBal <= 0.25 || newStat === 'locked') {
+                        setIsOnline(false);
+                        userService.toggleOnlineStatus(user.id, false).catch(() => {});
+                    }
+                }
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(walletChannel);
+        };
+    }, [user?.id]);
 
     useEffect(() => {
         generateHotZones();
@@ -184,7 +233,7 @@ export const DriverHomeScreen = ({ navigation }: any) => {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
                 fetchPendingCount();
                 if (payload.eventType === 'INSERT' && payload.new && payload.new.status === 'pending') {
-                    if (isOnline) {
+                    if (isOnline && !((walletBalance !== null && walletBalance <= 0.25) || walletStatus === 'locked')) {
                         setIncomingOrder(payload.new);
                     }
                 }
@@ -225,6 +274,17 @@ export const DriverHomeScreen = ({ navigation }: any) => {
 
     const handleAcceptIncoming = async () => {
         if (!incomingOrder || !user) return;
+        if (isLockedOut) {
+            Alert.alert(
+                'Wallet Locked Out',
+                `Your float balance ($${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}) is at or below the $0.25 minimum threshold. Please top up your wallet via ClicknPay before accepting orders.`,
+                [
+                    { text: 'Top Up with ClicknPay', onPress: () => navigation.navigate('Wallet') },
+                    { text: 'Cancel', style: 'cancel' }
+                ]
+            );
+            return;
+        }
         try {
             setAcceptingIncoming(true);
             const { error } = await supabase
@@ -251,16 +311,136 @@ export const DriverHomeScreen = ({ navigation }: any) => {
         }
     };
 
+    const locationSubscriptionRef = useRef<Location.LocationSubscription | null>(null);
+    const locationHeartbeatRef = useRef<any>(null);
+
+    const updateLiveGpsLocation = async () => {
+        if (!user || !isOnline) return;
+        try {
+            if (Platform.OS !== 'web') {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status === 'granted') {
+                    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                    if (loc?.coords) {
+                        await userService.updateDriverLocation(
+                            user.id,
+                            loc.coords.latitude,
+                            loc.coords.longitude,
+                            loc.coords.heading ?? 0
+                        );
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('Driver live GPS heartbeat error:', err);
+        }
+    };
+
+    // Location watcher & periodic heartbeat while driver is online
+    useEffect(() => {
+        if (!user || !isOnline || !isApproved) {
+            if (locationSubscriptionRef.current) {
+                locationSubscriptionRef.current.remove();
+                locationSubscriptionRef.current = null;
+            }
+            if (locationHeartbeatRef.current) {
+                clearInterval(locationHeartbeatRef.current);
+                locationHeartbeatRef.current = null;
+            }
+            return;
+        }
+
+        // 1. Initial immediate sync
+        updateLiveGpsLocation();
+
+        // 2. Real-time watch position if on device
+        let mounted = true;
+        if (Platform.OS !== 'web') {
+            Location.requestForegroundPermissionsAsync().then(({ status }) => {
+                if (!mounted || status !== 'granted') return;
+                Location.watchPositionAsync(
+                    {
+                        accuracy: Location.Accuracy.Balanced,
+                        timeInterval: 15000,
+                        distanceInterval: 15
+                    },
+                    (loc) => {
+                        if (loc?.coords && user) {
+                            userService.updateDriverLocation(
+                                user.id,
+                                loc.coords.latitude,
+                                loc.coords.longitude,
+                                loc.coords.heading ?? 0
+                            );
+                        }
+                    }
+                ).then((sub) => {
+                    if (mounted) {
+                        locationSubscriptionRef.current = sub;
+                    } else {
+                        sub.remove();
+                    }
+                }).catch((err) => console.warn('watchPositionAsync warning:', err));
+            });
+        }
+
+        // 3. Heartbeat backup every 20 seconds
+        locationHeartbeatRef.current = setInterval(updateLiveGpsLocation, 20000);
+
+        return () => {
+            mounted = false;
+            if (locationSubscriptionRef.current) {
+                locationSubscriptionRef.current.remove();
+                locationSubscriptionRef.current = null;
+            }
+            if (locationHeartbeatRef.current) {
+                clearInterval(locationHeartbeatRef.current);
+                locationHeartbeatRef.current = null;
+            }
+        };
+    }, [isOnline, isApproved, user?.id]);
+
     const toggleOnline = async () => {
-        if (walletStatus === 'locked') {
-            Alert.alert('Wallet Locked', `Your wallet is locked due to low balance ($${walletBalance?.toFixed(2) || '0.00'}). Please top up your wallet to go online.`);
+        if (isLockedOut) {
+            Alert.alert(
+                'Wallet Locked Out',
+                `Your wallet is locked due to low float balance ($${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}). Minimum required float is $0.25. Please top up your wallet via ClicknPay to go online.`,
+                [
+                    { text: 'Top Up with ClicknPay', onPress: () => navigation.navigate('Wallet') },
+                    { text: 'Cancel', style: 'cancel' }
+                ]
+            );
             setIsOnline(false);
             return;
         }
         const nextState = !isOnline;
         setIsOnline(nextState);
+
         try {
-            await userService.toggleOnlineStatus(user!.id, nextState);
+            let initialLat: number | undefined;
+            let initialLng: number | undefined;
+            let initialHeading: number | undefined;
+
+            if (nextState && Platform.OS !== 'web') {
+                try {
+                    const { status } = await Location.requestForegroundPermissionsAsync();
+                    if (status === 'granted') {
+                        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                        if (loc?.coords) {
+                            initialLat = loc.coords.latitude;
+                            initialLng = loc.coords.longitude;
+                            initialHeading = loc.coords.heading ?? 0;
+                        }
+                    }
+                } catch (locErr) {
+                    console.warn('Could not fetch location on toggle online:', locErr);
+                }
+            }
+
+            await userService.toggleOnlineStatus(user!.id, nextState, initialLat, initialLng);
+            if (nextState && initialLat !== undefined && initialLng !== undefined) {
+                await userService.updateDriverLocation(user!.id, initialLat, initialLng, initialHeading ?? 0);
+            }
         } catch (error) {
             setIsOnline(!nextState); // Rollback on error
             console.error('Error toggling status:', error);
@@ -287,18 +467,39 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                         </View>
 
                         {isApproved ? (
-                            <BlurView intensity={20} tint="light" style={styles.toggleContainer}>
-                                <Text style={[styles.statusText, isOnline ? styles.statusOnline : styles.statusOffline]}>
-                                    {isOnline ? 'ONLINE' : 'OFFLINE'}
-                                </Text>
-                                <Switch
-                                    trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#055FEE' }}
-                                    thumbColor={isOnline ? '#FFFFFF' : '#f4f3f4'}
-                                    ios_backgroundColor="rgba(255,255,255,0.2)"
-                                    onValueChange={toggleOnline}
-                                    value={isOnline}
-                                />
-                            </BlurView>
+                            isLockedOut ? (
+                                <TouchableOpacity
+                                    activeOpacity={0.8}
+                                    onPress={() => {
+                                        Alert.alert(
+                                            'Wallet Locked Out',
+                                            `Your wallet balance ($${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}) is at or below the $0.25 minimum float threshold. Top up with ClicknPay to go online.`,
+                                            [
+                                                { text: 'Top Up Now', onPress: () => navigation.navigate('Wallet') },
+                                                { text: 'Cancel', style: 'cancel' }
+                                            ]
+                                        );
+                                    }}
+                                >
+                                    <BlurView intensity={25} tint="light" style={styles.toggleLockedOutContainer}>
+                                        <Text style={styles.statusLockedOutText}>LOCKED</Text>
+                                        <Ionicons name="lock-closed" size={14} color="#EF4444" style={{ marginLeft: 5 }} />
+                                    </BlurView>
+                                </TouchableOpacity>
+                            ) : (
+                                <BlurView intensity={20} tint="light" style={styles.toggleContainer}>
+                                    <Text style={[styles.statusText, isOnline ? styles.statusOnline : styles.statusOffline]}>
+                                        {isOnline ? 'ONLINE' : 'OFFLINE'}
+                                    </Text>
+                                    <Switch
+                                        trackColor={{ false: 'rgba(255,255,255,0.2)', true: '#055FEE' }}
+                                        thumbColor={isOnline ? '#FFFFFF' : '#f4f3f4'}
+                                        ios_backgroundColor="rgba(255,255,255,0.2)"
+                                        onValueChange={toggleOnline}
+                                        value={isOnline}
+                                    />
+                                </BlurView>
+                            )
                         ) : (
                             <TouchableOpacity
                                 activeOpacity={0.8}
@@ -426,30 +627,59 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                     )}
 
                     {/* WALLET STATUS BANNERS */}
-                    {walletStatus === 'locked' && (
+                    {isLockedOut && (
                         <TouchableOpacity 
-                            activeOpacity={0.8}
+                            activeOpacity={0.85}
                             onPress={() => navigation.navigate('Wallet')}
                         >
-                            <View style={[styles.offlineWarning, { backgroundColor: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.4)' }]}>
-                                <Text style={styles.warningIcon}>🔒</Text>
-                                <Text style={[styles.offlineWarningText, { color: '#FCA5A5' }]}>
-                                    Wallet Lockout: Your balance is below $0.25. Tap here to top up with ClicknPay.
-                                </Text>
-                            </View>
+                            <LinearGradient
+                                colors={['rgba(239, 68, 68, 0.25)', 'rgba(185, 28, 28, 0.15)']}
+                                style={styles.walletLockedBanner}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                            >
+                                <View style={styles.walletLockedIconBadge}>
+                                    <Ionicons name="lock-closed" size={20} color="#EF4444" />
+                                </View>
+                                <View style={{ flex: 1, marginLeft: 12 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <Text style={styles.walletLockedTitle}>Wallet Float Lockout</Text>
+                                        <Text style={styles.walletLockedBalance}>${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}</Text>
+                                    </View>
+                                    <Text style={styles.walletLockedSub}>
+                                        Balance is below $0.25 minimum. Job acceptance disabled. Tap to top up via ClicknPay.
+                                    </Text>
+                                </View>
+                                <Ionicons name="chevron-forward" size={18} color="#EF4444" style={{ marginLeft: 6 }} />
+                            </LinearGradient>
                         </TouchableOpacity>
                     )}
-                    {walletStatus !== 'locked' && walletBalance !== null && walletBalance <= 3.00 && (
+
+                    {isLowBalance && (
                         <TouchableOpacity 
-                            activeOpacity={0.8}
+                            activeOpacity={0.85}
                             onPress={() => navigation.navigate('Wallet')}
                         >
-                            <View style={[styles.offlineWarning, { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: 'rgba(245, 158, 11, 0.4)' }]}>
-                                <Text style={styles.warningIcon}>⚠️</Text>
-                                <Text style={[styles.offlineWarningText, { color: '#FCD34D' }]}>
-                                    Low Wallet Balance: Your balance is ${walletBalance.toFixed(2)}. Tap here to top up with ClicknPay.
-                                </Text>
-                            </View>
+                            <LinearGradient
+                                colors={['rgba(245, 158, 11, 0.25)', 'rgba(217, 119, 6, 0.15)']}
+                                style={styles.walletWarningBanner}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                            >
+                                <View style={styles.walletWarningIconBadge}>
+                                    <Ionicons name="warning" size={20} color="#F59E0B" />
+                                </View>
+                                <View style={{ flex: 1, marginLeft: 12 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <Text style={styles.walletWarningTitle}>Low Float Balance Warning</Text>
+                                        <Text style={styles.walletWarningBalance}>${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}</Text>
+                                    </View>
+                                    <Text style={styles.walletWarningSub}>
+                                        Balance is at or below $3.00. Top up soon to avoid automatic lockout at $0.25.
+                                    </Text>
+                                </View>
+                                <Ionicons name="chevron-forward" size={18} color="#F59E0B" style={{ marginLeft: 6 }} />
+                            </LinearGradient>
                         </TouchableOpacity>
                     )}
 
@@ -553,17 +783,17 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                             style={styles.jobsButtonContainer}
                             activeOpacity={0.8}
                             onPress={() => navigation.navigate('Jobs')}
-                            disabled={!isOnline || walletStatus === 'locked'}
+                            disabled={!isOnline || isLockedOut}
                         >
                             <LinearGradient
-                                colors={isOnline && walletStatus !== 'locked' ? (pendingJobsCount > 0 ? ['#F59E0B', '#EA580C'] : ['#055FEE', '#5B99F2']) : ['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
+                                colors={isOnline && !isLockedOut ? (pendingJobsCount > 0 ? ['#F59E0B', '#EA580C'] : ['#055FEE', '#5B99F2']) : ['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.1)']}
                                 style={styles.jobsGradient}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
                             >
-                                <Text style={[styles.jobsButtonText, (!isOnline || walletStatus === 'locked') && styles.jobsButtonTextOffline]}>
-                                    {walletStatus === 'locked' 
-                                        ? 'Locked (Low Balance)' 
+                                <Text style={[styles.jobsButtonText, (!isOnline || isLockedOut) && styles.jobsButtonTextOffline]}>
+                                    {isLockedOut 
+                                        ? '🔒 Locked (Float Below $0.25)' 
                                         : isOnline 
                                             ? pendingJobsCount > 0 
                                                 ? `⚡ View Available Jobs (${pendingJobsCount} New!)` 
@@ -723,6 +953,69 @@ export const DriverHomeScreen = ({ navigation }: any) => {
                                 >
                                     <Text style={styles.tutorialModalDoneText}>Got it, thanks!</Text>
                                 </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* WALLET LOCKOUT BLOCKING MODAL */}
+                <Modal
+                    visible={isApproved && isLockedOut}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => {
+                        // Non-dismissible hardware back button
+                    }}
+                >
+                    <View style={styles.lockoutModalBackdrop}>
+                        <View style={styles.lockoutModalCard}>
+                            <View style={styles.lockoutIconRing}>
+                                <Ionicons name="lock-closed" size={36} color="#EF4444" />
+                            </View>
+
+                            <Text style={styles.lockoutTitle}>Courier Float Lockout</Text>
+                            <Text style={styles.lockoutSubtitle}>
+                                Your float balance is below the minimum $0.25 threshold.
+                            </Text>
+
+                            <View style={styles.lockoutBalanceCard}>
+                                <Text style={styles.lockoutBalanceLabel}>CURRENT FLOAT BALANCE</Text>
+                                <Text style={styles.lockoutBalanceValue}>
+                                    ${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}{' '}
+                                    <Text style={styles.lockoutBalanceCurrency}>USD</Text>
+                                </Text>
+                                <View style={styles.lockoutPill}>
+                                    <Text style={styles.lockoutPillText}>MINIMUM OPERATIONAL FLOAT: $0.25</Text>
+                                </View>
+                            </View>
+
+                            <Text style={styles.lockoutNoticeText}>
+                                ShipMate requires active Mates to maintain at least $0.25 in their float wallet to cover platform commissions. Job acceptance and online status are temporarily disabled until your balance is topped up.
+                            </Text>
+
+                            <TouchableOpacity
+                                style={styles.lockoutTopUpBtn}
+                                activeOpacity={0.85}
+                                onPress={() => navigation.navigate('Wallet')}
+                            >
+                                <LinearGradient
+                                    colors={['#055FEE', '#5B99F2']}
+                                    style={styles.lockoutTopUpGradient}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 0 }}
+                                >
+                                    <Ionicons name="wallet-outline" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                                    <Text style={styles.lockoutTopUpText}>Top Up via ClicknPay →</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.lockoutSupportBtn}
+                                activeOpacity={0.8}
+                                onPress={() => Linking.openURL('https://wa.me/263773257425?text=Hi%20ShipMate%20Support%2C%20my%20driver%20wallet%20is%20locked%20and%20I%20need%20help%20topping%20up.')}
+                            >
+                                <Ionicons name="logo-whatsapp" size={16} color="#10B981" style={{ marginRight: 6 }} />
+                                <Text style={styles.lockoutSupportText}>Need help? Chat with Fleet Support</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -1450,5 +1743,213 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
         fontSize: 15,
         fontWeight: '800',
+    },
+    toggleLockedOutContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 24,
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.5)',
+        backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    },
+    statusLockedOutText: {
+        fontWeight: 'bold',
+        fontSize: 13,
+        letterSpacing: 0.5,
+        color: '#EF4444',
+    },
+    walletWarningBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 14,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(245, 158, 11, 0.4)',
+        marginBottom: 20,
+    },
+    walletWarningIconBadge: {
+        width: 38,
+        height: 38,
+        borderRadius: 12,
+        backgroundColor: 'rgba(245, 158, 11, 0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    walletWarningTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#FCD34D',
+    },
+    walletWarningBalance: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: '#FBBF24',
+    },
+    walletWarningSub: {
+        fontSize: 12,
+        color: '#FDE68A',
+        marginTop: 2,
+        lineHeight: 16,
+    },
+    walletLockedBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 14,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.5)',
+        marginBottom: 20,
+    },
+    walletLockedIconBadge: {
+        width: 38,
+        height: 38,
+        borderRadius: 12,
+        backgroundColor: 'rgba(239, 68, 68, 0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    walletLockedTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#FCA5A5',
+    },
+    walletLockedBalance: {
+        fontSize: 14,
+        fontWeight: '800',
+        color: '#EF4444',
+    },
+    walletLockedSub: {
+        fontSize: 12,
+        color: '#FECACA',
+        marginTop: 2,
+        lineHeight: 16,
+    },
+    lockoutModalBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(15, 23, 42, 0.88)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
+    },
+    lockoutModalCard: {
+        width: '100%',
+        maxWidth: 400,
+        backgroundColor: '#1E293B',
+        borderRadius: 24,
+        padding: 24,
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: 'rgba(239, 68, 68, 0.4)',
+        shadowColor: '#EF4444',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.3,
+        shadowRadius: 24,
+        elevation: 12,
+    },
+    lockoutIconRing: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        backgroundColor: 'rgba(239, 68, 68, 0.15)',
+        borderWidth: 2,
+        borderColor: 'rgba(239, 68, 68, 0.4)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    lockoutTitle: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#FFFFFF',
+        marginBottom: 6,
+        textAlign: 'center',
+        letterSpacing: -0.3,
+    },
+    lockoutSubtitle: {
+        fontSize: 14,
+        color: '#94A3B8',
+        textAlign: 'center',
+        marginBottom: 20,
+        lineHeight: 20,
+    },
+    lockoutBalanceCard: {
+        width: '100%',
+        backgroundColor: 'rgba(15, 23, 42, 0.6)',
+        borderRadius: 16,
+        padding: 16,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(239, 68, 68, 0.25)',
+        marginBottom: 16,
+    },
+    lockoutBalanceLabel: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#94A3B8',
+        letterSpacing: 0.8,
+        marginBottom: 4,
+    },
+    lockoutBalanceValue: {
+        fontSize: 32,
+        fontWeight: '800',
+        color: '#EF4444',
+        letterSpacing: -0.5,
+    },
+    lockoutBalanceCurrency: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#F87171',
+    },
+    lockoutPill: {
+        marginTop: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 8,
+        backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    },
+    lockoutPillText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#FCA5A5',
+        letterSpacing: 0.3,
+    },
+    lockoutNoticeText: {
+        fontSize: 13,
+        color: '#CBD5E1',
+        textAlign: 'center',
+        lineHeight: 19,
+        marginBottom: 24,
+    },
+    lockoutTopUpBtn: {
+        width: '100%',
+        borderRadius: 14,
+        overflow: 'hidden',
+        marginBottom: 12,
+    },
+    lockoutTopUpGradient: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 15,
+        paddingHorizontal: 20,
+    },
+    lockoutTopUpText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: '700',
+    },
+    lockoutSupportBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 10,
+    },
+    lockoutSupportText: {
+        color: '#10B981',
+        fontSize: 13,
+        fontWeight: '600',
     },
 });

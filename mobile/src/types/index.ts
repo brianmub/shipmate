@@ -169,6 +169,12 @@ export interface Order {
     sms_notifications_enabled?: boolean;
     sms_notification_fee?: number;
 
+    // Order Participant Numbers & Relations
+    customer_phone?: string | null;
+    driver_phone?: string | null;
+    customer?: { full_name: string; phone?: string | null };
+    driver?: { full_name: string; phone?: string | null };
+
     // Cancellation & Release & Anti-Abuse Tracking
     cumulative_distance_km?: number;
     last_driver_latitude?: number | null;
@@ -249,13 +255,14 @@ export interface MaskedCallLog {
     id: string;
     order_id: string;
     caller_id?: string | null;
+    caller_phone?: string | null;
     caller_role: 'driver' | 'customer' | 'system';
     recipient_id?: string | null;
     recipient_phone?: string | null;
     masked_proxy_number: string;
     status: 'initiated' | 'completed' | 'unanswered' | 'busy' | 'failed' | 'simulated';
     duration_seconds: number;
-    trigger_event: 'manual_driver_call' | 'auto_cancellation' | 'auto_release';
+    trigger_event: 'manual_driver_call' | 'auto_cancellation' | 'auto_release' | 'customer_call' | 'in_app_call' | 'in_app_audio_call';
     created_at: string;
 }
 

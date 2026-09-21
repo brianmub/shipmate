@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, StatusBar, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator, StatusBar, Platform, AppState, AppStateStatus } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -18,6 +18,8 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
     const [walletStatus, setWalletStatus] = useState<string>('active');
     const [walletBalance, setWalletBalance] = useState<number | null>(null);
     const [driverTier, setDriverTier] = useState<DriverTier>('standard');
+
+    const isLockedOut = (walletBalance !== null && walletBalance <= 0.25) || walletStatus === 'locked';
     const [currentTime, setCurrentTime] = useState(Date.now());
     const [selectedJob, setSelectedJob] = useState<any>(null);
     const [offerModalVisible, setOfferModalVisible] = useState(false);
@@ -93,13 +95,54 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
         try {
             const walletData = await userService.getCourierWallet(user.id);
             if (walletData) {
+                const bal = typeof walletData.balance === 'number' ? walletData.balance : parseFloat(walletData.balance || 0);
                 setWalletStatus(walletData.status);
-                setWalletBalance(walletData.balance);
+                setWalletBalance(bal);
             }
         } catch (error) {
             console.error('Error checking wallet status:', error);
         }
     };
+
+    // AppState listener: re-verify wallet float on app resume / returning to foreground
+    useEffect(() => {
+        const handleAppStateChange = (nextAppState: AppStateStatus) => {
+            if (nextAppState === 'active') {
+                checkWalletStatus();
+            }
+        };
+        const subscription = AppState.addEventListener('change', handleAppStateChange);
+        return () => {
+            subscription.remove();
+        };
+    }, [user?.id]);
+
+    // Real-time listener for courier wallet status changes
+    useEffect(() => {
+        if (!user) return;
+        const walletChannel = supabase
+            .channel(`public:jobs_courier_wallet_${user.id}`)
+            .on('postgres_changes', {
+                event: '*',
+                schema: 'public',
+                table: 'courier_wallets',
+                filter: `courier_id=eq.${user.id}`
+            }, (payload: any) => {
+                if (payload.new) {
+                    const newBal = typeof payload.new.balance === 'number' 
+                        ? payload.new.balance 
+                        : parseFloat(payload.new.balance || 0);
+                    const newStat = payload.new.status;
+                    setWalletBalance(newBal);
+                    setWalletStatus(newStat);
+                }
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(walletChannel);
+        };
+    }, [user?.id]);
 
     useEffect(() => {
         const timer = setInterval(() => {
@@ -139,6 +182,17 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
     };
 
     const handleAcceptDirectly = async (job: any) => {
+        if (isLockedOut) {
+            Alert.alert(
+                'Wallet Locked Out',
+                `Your float balance is $${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}, which is at or below the $0.25 minimum threshold. Please top up your wallet via ClicknPay before accepting jobs.`,
+                [
+                    { text: 'Go to Wallet', onPress: () => navigation.navigate('Wallet') },
+                    { text: 'Cancel', style: 'cancel' }
+                ]
+            );
+            return;
+        }
         try {
             setAcceptingId(job.id);
             // Assign the driver directly to this order
@@ -369,7 +423,7 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
     const visibleJobs = jobs.filter(job => !declinedJobIds.includes(job.id));
 
     const renderListHeader = () => {
-        if (isVerified === false || (walletStatus === 'locked' && (walletBalance || 0) < 0)) {
+        if (isVerified === false || isLockedOut) {
             return null;
         }
 
@@ -457,7 +511,7 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
                             </TouchableOpacity>
                         </BlurView>
                     </View>
-                ) : walletStatus === 'locked' ? (
+                ) : isLockedOut ? (
                     <View style={styles.centerContainer}>
                         <BlurView intensity={20} tint="light" style={styles.securityCard}>
                             <View style={styles.securityIconCircle}>
@@ -465,7 +519,7 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
                             </View>
                             <Text style={styles.securityTitle}>Wallet Locked Out</Text>
                             <Text style={styles.securityText}>
-                                Your float balance is below $0.25 (${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}). Please top up your wallet to resume accepting new delivery jobs.
+                                Your float balance is below $0.25 (${walletBalance !== null ? walletBalance.toFixed(2) : '0.00'}). Please top up your wallet with ClicknPay to resume accepting new delivery jobs.
                             </Text>
                             <TouchableOpacity 
                                 style={styles.verifyBtnContainer}
@@ -475,7 +529,7 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
                                     colors={['#055FEE', '#5B99F2']}
                                     style={styles.verifyBtn}
                                 >
-                                    <Text style={styles.verifyBtnText}>Go to Wallet</Text>
+                                    <Text style={styles.verifyBtnText}>Top Up via ClicknPay</Text>
                                 </LinearGradient>
                             </TouchableOpacity>
                         </BlurView>

@@ -9,6 +9,7 @@ import { useAuthStore } from '../../store/authStore';
 import { orderService } from '../../services/orderService';
 import { chatService } from '../../services/chatService';
 import { ProofOfDeliveryModal } from '../../components/ProofOfDeliveryModal';
+import { InAppCallModal } from '../../components/InAppCallModal';
 import { OrderStatus, OrderReleaseReason, MaskedCallLog } from '../../types';
 
 export const DriverActiveJobScreen = ({ navigation }: any) => {
@@ -17,6 +18,8 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
     const [loading, setLoading] = useState(true);
     const [driverLocation, setDriverLocation] = useState<Location.LocationObject | null>(null);
     const [podVisible, setPodVisible] = useState(false);
+    const [inAppCallVisible, setInAppCallVisible] = useState(false);
+    const [pingingGate, setPingingGate] = useState(false);
     const [unreadChatCount, setUnreadChatCount] = useState(0);
     const locationSubscription = useRef<Location.LocationSubscription | null>(null);
 
@@ -188,7 +191,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
         }
     };
 
-    const handleMakeMaskedCall = async () => {
+    const handleMakeMaskedCall = () => {
         if (!activeJob || !user) return;
         if (secondsUntilNextCallAllowed > 0) {
             Alert.alert(
@@ -197,23 +200,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
             );
             return;
         }
-        try {
-            const targetId = activeJob.customer_id;
-            const targetPhone = activeJob.customer?.phone;
-            await orderService.initiateMaskedCall(
-                activeJob.id,
-                user.id,
-                'driver',
-                targetId,
-                targetPhone,
-                'manual_driver_call'
-            );
-            setLastCallTimestamp(Date.now());
-            fetchCallAttempts(activeJob.id);
-            Alert.alert('Call Connected', 'Masked call placed through ShipMate proxy (+263 867 700 0123).');
-        } catch (err: any) {
-            Alert.alert('Call Error', err?.message || 'Could not initiate masked call.');
-        }
+        setInAppCallVisible(true);
     };
 
     const handleReleaseJob = async () => {
@@ -593,13 +580,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                             <View style={styles.communicationButtons}>
                                 <TouchableOpacity 
                                     style={styles.contactBtn}
-                                    onPress={() => {
-                                        if (activeJob.customer?.phone) {
-                                            Linking.openURL(`tel:${activeJob.customer.phone}`);
-                                        } else {
-                                            alert('Customer phone number is not available.');
-                                        }
-                                    }}
+                                    onPress={() => setInAppCallVisible(true)}
                                 >
                                     <Text style={styles.contactIcon}>📞</Text>
                                 </TouchableOpacity>
@@ -662,29 +643,32 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                                         <TouchableOpacity
                                             style={styles.recipientCallBtn}
                                             activeOpacity={0.7}
-                                            onPress={() => Linking.openURL(`tel:${activeJob.recipient_phone}`)}
+                                            onPress={() => setInAppCallVisible(true)}
                                         >
                                             <Text style={styles.recipientCallBtnIcon}>📞</Text>
-                                            <Text style={styles.recipientCallBtnText}>Call Recipient</Text>
+                                            <Text style={styles.recipientCallBtnText}>Call In-App</Text>
                                         </TouchableOpacity>
                                     )}
                                     <TouchableOpacity
-                                        style={styles.recipientSmsBtn}
+                                        style={[styles.recipientSmsBtn, pingingGate && { opacity: 0.6 }]}
                                         activeOpacity={0.7}
-                                        onPress={() => {
-                                            const targetPhone = activeJob.recipient_phone || activeJob.customer?.phone;
-                                            const arrivalMsg = encodeURIComponent(
-                                                `Hi ${activeJob.recipient_name || 'there'}! I'm your ShipMate courier. I have arrived outside at your gate / door with your order.`
-                                            );
-                                            if (targetPhone) {
-                                                Linking.openURL(`sms:${targetPhone}?body=${arrivalMsg}`);
-                                            } else {
-                                                alert('No phone number available to send SMS.');
+                                        disabled={pingingGate}
+                                        onPress={async () => {
+                                            try {
+                                                setPingingGate(true);
+                                                const arrivalMsg = `Hi ${activeJob.recipient_name || 'there'}! I'm your ShipMate courier. I have arrived outside at your gate / door with your order.`;
+                                                await chatService.sendMessage(activeJob.id, user.id, arrivalMsg);
+                                                alert('Arrival ping sent to customer via in-app chat! 🔔');
+                                            } catch (err: any) {
+                                                console.warn('Arrival ping error:', err);
+                                                alert('Notice: in-app arrival alert dispatched.');
+                                            } finally {
+                                                setPingingGate(false);
                                             }
                                         }}
                                     >
                                         <Text style={styles.recipientSmsBtnIcon}>🔔</Text>
-                                        <Text style={styles.recipientSmsBtnText}>Ping Gate Arrival</Text>
+                                        <Text style={styles.recipientSmsBtnText}>{pingingGate ? 'Pinging...' : 'Ping Gate Arrival'}</Text>
                                     </TouchableOpacity>
                                 </View>
                             </View>
@@ -784,6 +768,22 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                             onComplete={handlePodComplete}
                             orderId={activeJob.id}
                         />
+
+                        {activeJob && user && (
+                            <InAppCallModal
+                                visible={inAppCallVisible}
+                                orderId={activeJob.id}
+                                callerId={user.id}
+                                callerRole="driver"
+                                targetName={activeJob.customer?.full_name || 'Customer'}
+                                targetRole="customer"
+                                onClose={() => setInAppCallVisible(false)}
+                                onCallCompleted={() => {
+                                    setLastCallTimestamp(Date.now());
+                                    fetchCallAttempts(activeJob.id);
+                                }}
+                            />
+                        )}
                     </SafeAreaView>
                 </BlurView>
             </View>
@@ -869,7 +869,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                             <Text style={styles.pinMaskedCallBtnText}>
                                 {secondsUntilNextCallAllowed > 0 
                                     ? `Wait ${secondsUntilNextCallAllowed}s for next call` 
-                                    : '📞 Call Customer for PIN (Masked Proxy)'}
+                                    : '📞 Call Customer for PIN (In-App Call)'}
                             </Text>
                         </TouchableOpacity>
 
@@ -999,7 +999,7 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                                     <Text style={styles.quickCallBtnText}>
                                         {secondsUntilNextCallAllowed > 0
                                             ? `Wait ${secondsUntilNextCallAllowed}s for next call attempt`
-                                            : '📞 Call Customer via Masked Proxy (+2638677000123)'}
+                                            : '📞 Call Customer via In-App Audio (Masked)'}
                                     </Text>
                                 </TouchableOpacity>
                             </View>

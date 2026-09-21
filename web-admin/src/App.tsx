@@ -103,6 +103,8 @@ function App() {
           <Route path="/admin" element={<AdminRoute />}>
             <Route element={<AdminLayout />}>
               <Route path="dashboard" element={<AdminDashboard />} />
+              <Route path="approvals" element={<UserManagement initialTab="couriers" />} />
+              <Route path="couriers" element={<UserManagement initialTab="couriers" />} />
               <Route path="orders" element={<OrderLog />} />
               <Route path="fleet" element={<FleetMap />} />
               <Route path="users" element={<UserManagement />} />
