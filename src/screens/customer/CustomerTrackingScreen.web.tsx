@@ -663,9 +663,8 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                             Your previous Mate had an issue ({order.last_released_reason ? order.last_released_reason.replace(/_/g, ' ') : 'courier release'}) and released this delivery. We've prioritized your order at the top of the job queue for nearby Mates to bid immediately.
                                         </Text>
                                     </View>
-                                ) : (
-                                    {searchPhase === 'timeout' && offers.length === 0 ? (
-                                        <View style={styles.timeoutCard}>
+                                ) : searchPhase === 'timeout' && offers.length === 0 ? (
+                                    <View style={styles.timeoutCard}>
                                             <View style={styles.timeoutHeader}>
                                                 <Text style={styles.timeoutIcon}>⏳</Text>
                                                 <View style={{ flex: 1 }}>
