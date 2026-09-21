@@ -39,6 +39,19 @@ export const chatService = {
             .single();
 
         if (error) throw error;
+
+        // Dispatch background push notification to recipient asynchronously
+        supabase.functions.invoke('notify-call-message', {
+            body: {
+                orderId,
+                eventType: 'message',
+                senderId,
+                messageText: text
+            }
+        }).catch((pushErr) => {
+            console.warn('Non-blocking: could not dispatch message push notification:', pushErr);
+        });
+
         return data;
     },
 

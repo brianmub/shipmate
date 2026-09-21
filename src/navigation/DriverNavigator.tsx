@@ -36,6 +36,7 @@ export const DriverNavigator = () => {
     // In 'pending' mode, DriverHomeScreen displays limited/locked features alongside the Courier Academy orientation guides
     return (
         <Drawer.Navigator
+            initialRouteName="Jobs"
             screenOptions={{
                 headerTintColor: '#333',
                 drawerActiveTintColor: '#055FEE',
@@ -43,14 +44,14 @@ export const DriverNavigator = () => {
             }}
         >
             <Drawer.Screen
-                name="Dashboard"
-                component={DriverHomeScreen}
-                options={{ title: 'Mate Dashboard' }}
-            />
-            <Drawer.Screen
                 name="Jobs"
                 component={DriverJobsScreen}
                 options={{ title: 'Available Jobs' }}
+            />
+            <Drawer.Screen
+                name="Dashboard"
+                component={DriverHomeScreen}
+                options={{ title: 'Mate Dashboard' }}
             />
             <Drawer.Screen
                 name="ActiveJob"

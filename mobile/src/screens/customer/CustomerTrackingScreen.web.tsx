@@ -7,9 +7,24 @@ import { supabase } from '../../utils/supabase';
 import { CustomerRatingModal } from '../../components/CustomerRatingModal';
 import { OfferSelectionPanel } from '../../components/OfferSelectionPanel';
 import { InAppCallModal } from '../../components/InAppCallModal';
+import { InAppChatModal } from '../../components/InAppChatModal';
 import { orderService } from '../../services/orderService';
 import { useAuthStore } from '../../store/authStore';
 import { chatService } from '../../services/chatService';
+
+export const ACTIVE_TRIP_STATUSES = [
+    'driver_assigned',
+    'en_route_to_pickup',
+    'arrived_at_pickup',
+    'picked_up',
+    'en_route_to_delivery',
+    'arrived_at_delivery',
+    'in_delivery',
+    'en_route',
+    'arrived',
+    'accepted',
+    'in_progress'
+];
 
 export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     const { orderId } = route.params;
@@ -17,6 +32,38 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     const [order, setOrder] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [inAppCallVisible, setInAppCallVisible] = useState(false);
+    const [isIncomingCall, setIsIncomingCall] = useState(false);
+    const [inAppChatVisible, setInAppChatVisible] = useState(false);
+
+    // Watch for deep-linked / in-app banner incoming call triggers
+    useEffect(() => {
+        if (route?.params?.openCall) {
+            setIsIncomingCall(!!route.params.isIncoming);
+            setInAppCallVisible(true);
+        }
+    }, [route?.params?.openCall, route?.params?.isIncoming]);
+
+    // Watch for deep-linked / in-app message triggers
+    useEffect(() => {
+        if (route?.params?.openChat) {
+            setInAppChatVisible(true);
+        }
+    }, [route?.params?.openChat]);
+
+    // Lock customer on tracking map: intercept React Navigation beforeRemove during active trip
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
+            if (order && ACTIVE_TRIP_STATUSES.includes(order.status)) {
+                e.preventDefault();
+                Alert.alert(
+                    "Trip in Progress",
+                    "Your Mate is actively handling this delivery. The live map remains your persistent base view until completed or cancelled."
+                );
+            }
+        });
+        return unsubscribe;
+    }, [navigation, order?.status]);
+
     const [viewingCouriers, setViewingCouriers] = useState<any[]>([]);
     const [acknowledging, setAcknowledging] = useState(false);
     const [showRatingModal, setShowRatingModal] = useState(false);
@@ -225,7 +272,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
             } else {
                 alert('Order Cancelled free of charge.');
             }
-            navigation.navigate('Home');
+            navigation.navigate('CustomerTabs');
         } catch (err: any) {
             alert('Failed to cancel order: ' + (err?.message || err));
         } finally {
@@ -435,9 +482,16 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                 <BlurView intensity={40} tint="light" style={styles.headerBlur}>
                     <SafeAreaView edges={['top']}>
                         <View style={styles.headerContent}>
-                            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-                                <Text style={styles.backTxt}>← Back</Text>
-                            </TouchableOpacity>
+                            {order && ACTIVE_TRIP_STATUSES.includes(order.status) ? (
+                                <View style={styles.activeTripLockedBadge}>
+                                    <View style={styles.livePulseDot} />
+                                    <Text style={styles.activeTripLockedText}>TRIP ACTIVE</Text>
+                                </View>
+                            ) : (
+                                <TouchableOpacity onPress={() => navigation.navigate('CustomerTabs')} style={styles.backBtn}>
+                                    <Text style={styles.backTxt}>← Back</Text>
+                                </TouchableOpacity>
+                            )}
                             <Text style={styles.headerText}>Live Tracking</Text>
                             <View style={{ width: 60 }} />
                         </View>
@@ -561,6 +615,21 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                             ? 'Package handover was successfully verified with this code.'
                                             : 'Give this 4-digit code to your Mate when they hand over your package. Zero SMS fees.'}
                                 </Text>
+                            </View>
+                        )}
+
+                        {/* Milestone Arrival Banner: Mate at Pickup */}
+                        {order.status === 'arrived_at_pickup' && (
+                            <View style={styles.gateArrivalBanner}>
+                                <View style={styles.gateArrivalTopRow}>
+                                    <Text style={styles.gateArrivalIcon}>🔔</Text>
+                                    <View style={styles.gateArrivalTextWrap}>
+                                        <Text style={styles.gateArrivalTitle}>Your Mate Has Arrived at Pickup!</Text>
+                                        <Text style={styles.gateArrivalDesc}>
+                                            Courier is at the pickup location collecting your package now.
+                                        </Text>
+                                    </View>
+                                </View>
                             </View>
                         )}
 
@@ -846,7 +915,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                     <TouchableOpacity
                                         style={styles.doneButtonContainer}
                                         activeOpacity={0.8}
-                                        onPress={() => navigation.navigate('Home')}
+                                        onPress={() => navigation.navigate('CustomerTabs')}
                                     >
                                         <LinearGradient
                                             colors={['#055FEE', '#5B99F2']}
@@ -879,11 +948,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                         style={[styles.contactBtn, styles.chatBtn]}
                                         onPress={() => {
                                             setUnreadChatCount(0);
-                                            navigation.navigate('Chat', { 
-                                                orderId: order.id, 
-                                                recipientName: driverName, 
-                                                recipientPhone: order.driver?.phone 
-                                            });
+                                            setInAppChatVisible(true);
                                         }}
                                     >
                                         <Text style={styles.contactIcon}>💬</Text>
@@ -932,7 +997,22 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                     callerRole="customer"
                     targetName={driverName}
                     targetRole="driver"
-                    onClose={() => setInAppCallVisible(false)}
+                    isIncoming={isIncomingCall}
+                    onClose={() => {
+                        setInAppCallVisible(false);
+                        setIsIncomingCall(false);
+                    }}
+                />
+            )}
+
+            {order && (
+                <InAppChatModal
+                    visible={inAppChatVisible}
+                    orderId={order.id}
+                    recipientName={driverName}
+                    recipientPhone={order?.driver?.phone}
+                    onClose={() => setInAppChatVisible(false)}
+                    onOpenCall={() => setInAppCallVisible(true)}
                 />
             )}
 
@@ -1085,6 +1165,29 @@ const styles = StyleSheet.create({
     headerContent: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         paddingHorizontal: 20, paddingTop: 10, paddingBottom: 16,
+    },
+    activeTripLockedBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        backgroundColor: '#EFF6FF',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#BFDBFE',
+    },
+    livePulseDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#10B981',
+        marginRight: 6,
+    },
+    activeTripLockedText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#055FEE',
+        letterSpacing: 0.5,
     },
     backBtn: { padding: 8, backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 12 },
     backTxt: { fontSize: 14, fontWeight: 'bold', color: '#334155' },

@@ -12,16 +12,25 @@ import { ProofOfDeliveryModal } from '../../components/ProofOfDeliveryModal';
 import { InAppCallModal } from '../../components/InAppCallModal';
 import { OrderStatus, OrderReleaseReason, MaskedCallLog } from '../../types';
 
-export const DriverActiveJobScreen = ({ navigation }: any) => {
+export const DriverActiveJobScreen = ({ navigation, route }: any) => {
     const { user } = useAuthStore();
     const [activeJob, setActiveJob] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [driverLocation, setDriverLocation] = useState<Location.LocationObject | null>(null);
     const [podVisible, setPodVisible] = useState(false);
     const [inAppCallVisible, setInAppCallVisible] = useState(false);
+    const [isIncomingCall, setIsIncomingCall] = useState(false);
     const [pingingGate, setPingingGate] = useState(false);
     const [unreadChatCount, setUnreadChatCount] = useState(0);
     const locationSubscription = useRef<Location.LocationSubscription | null>(null);
+
+    // Watch for deep-linked / in-app banner incoming call triggers
+    useEffect(() => {
+        if (route?.params?.openCall) {
+            setIsIncomingCall(!!route.params.isIncoming);
+            setInAppCallVisible(true);
+        }
+    }, [route?.params?.openCall, route?.params?.isIncoming]);
 
     // Handover PIN (OTP) Confirmation States
     const [pinModalVisible, setPinModalVisible] = useState(false);
@@ -777,7 +786,11 @@ export const DriverActiveJobScreen = ({ navigation }: any) => {
                                 callerRole="driver"
                                 targetName={activeJob.customer?.full_name || 'Customer'}
                                 targetRole="customer"
-                                onClose={() => setInAppCallVisible(false)}
+                                isIncoming={isIncomingCall}
+                                onClose={() => {
+                                    setInAppCallVisible(false);
+                                    setIsIncomingCall(false);
+                                }}
                                 onCallCompleted={() => {
                                     setLastCallTimestamp(Date.now());
                                     fetchCallAttempts(activeJob.id);

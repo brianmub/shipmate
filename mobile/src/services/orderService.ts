@@ -383,6 +383,51 @@ export const orderService = {
     },
 
     /**
+     * Get active order for a customer that has been accepted by a Mate
+     * Used to lock customer onto the live tracking map during an active trip
+     */
+    async getActiveCustomerOrder(customerId: string) {
+        const { data, error } = await supabase
+            .from('orders')
+            .select('*, driver:driver_id(full_name, phone)')
+            .eq('customer_id', customerId)
+            .in('status', [
+                'driver_assigned', 
+                'en_route_to_pickup', 
+                'arrived_at_pickup', 
+                'picked_up', 
+                'en_route_to_delivery', 
+                'arrived_at_delivery',
+                'in_delivery',
+                'en_route',
+                'arrived',
+                'accepted',
+                'in_progress'
+            ])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+        if (error && error.code !== 'PGRST116') throw error;
+        if (!data) return null;
+
+        // Defensive resolution of driver phone
+        if (data.driver_id && (!data.driver?.phone || !data.driver_phone)) {
+            let dPhone = data.driver_phone || data.driver?.phone || null;
+            if (!data.driver) {
+                data.driver = { full_name: 'Your Mate', phone: dPhone };
+            } else if (!data.driver.phone) {
+                data.driver.phone = dPhone;
+            }
+            if (!data.driver_phone) {
+                data.driver_phone = dPhone;
+            }
+        }
+
+        return data as Order | null;
+    },
+
+    /**
      * Update order status
      */
     async updateOrderStatus(orderId: string, status: OrderStatus) {

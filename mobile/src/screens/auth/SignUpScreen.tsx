@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Animated } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../utils/supabase';
+import { registerForPushNotificationsAsync } from '../../utils/pushNotifications';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
@@ -70,6 +71,9 @@ export const SignUpScreen = ({ navigation }: any) => {
             if (error) throw error;
 
             if (data.session) {
+                if (Platform.OS !== 'web' && data.user?.id) {
+                    registerForPushNotificationsAsync(data.user.id);
+                }
                 setRole(role);
                 setSession(data.session);
                 setUser(data.user);

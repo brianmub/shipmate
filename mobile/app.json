@@ -29,13 +29,15 @@
     },
     "android": {
       "package": "com.shipmate.shipmate",
-      "versionCode": 22,
+      "versionCode": 25,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION"
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
       ],
       "config": {
         "googleMaps": {

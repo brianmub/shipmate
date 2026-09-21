@@ -24,6 +24,8 @@ export interface InAppCallModalProps {
     onClose: () => void;
     onCallCompleted?: (durationSeconds: number) => void;
     proxyNumber?: string;
+    isIncoming?: boolean;
+    initialState?: CallState;
 }
 
 export type CallState = 'initiating' | 'ringing' | 'connected' | 'ended';
@@ -37,9 +39,13 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
     targetRole,
     onClose,
     onCallCompleted,
-    proxyNumber = '+2638677000123'
+    proxyNumber = '+2638677000123',
+    isIncoming = false,
+    initialState
 }) => {
-    const [callState, setCallState] = useState<CallState>('initiating');
+    const [callState, setCallState] = useState<CallState>(
+        initialState || (isIncoming ? 'connected' : 'initiating')
+    );
     const [durationSeconds, setDurationSeconds] = useState<number>(0);
     const [isMuted, setIsMuted] = useState<boolean>(false);
     const [isSpeakerOn, setIsSpeakerOn] = useState<boolean>(false);
@@ -86,7 +92,7 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
     // Manage call progression and real-time audio channel
     useEffect(() => {
         if (!visible || !orderId) {
-            setCallState('initiating');
+            setCallState(isIncoming ? 'connected' : 'initiating');
             setDurationSeconds(0);
             setIsMuted(false);
             setIsSpeakerOn(false);
@@ -103,37 +109,67 @@ export const InAppCallModal: React.FC<InAppCallModalProps> = ({
 
         channel
             .on('broadcast', { event: 'call_action' }, (payload: any) => {
-                if (payload.payload?.action === 'end_call') {
+                const action = payload.payload?.action;
+                if (action === 'end_call' || action === 'decline_call') {
                     handleRemoteCallEnd();
-                } else if (payload.payload?.action === 'answer_call') {
+                } else if (action === 'answer_call') {
                     setCallState('connected');
                 }
             })
             .subscribe((status) => {
                 if (status === 'SUBSCRIBED') {
-                    channel.send({
-                        type: 'broadcast',
-                        event: 'call_action',
-                        payload: { action: 'initiate_call', callerId, callerRole, orderId }
-                    });
+                    if (isIncoming) {
+                        channel.send({
+                            type: 'broadcast',
+                            event: 'call_action',
+                            payload: { action: 'answer_call', orderId }
+                        });
+                    } else {
+                        channel.send({
+                            type: 'broadcast',
+                            event: 'call_action',
+                            payload: { action: 'initiate_call', callerId, callerRole, orderId }
+                        });
+                    }
                 }
             });
 
-        // 2. Progression: 'initiating' -> 'ringing' -> 'connected'
-        const ringingTimeout = setTimeout(() => {
-            setCallState('ringing');
-        }, 1200);
+        // 2. If caller, dispatch backend push notification to recipient immediately
+        let ringingTimeout: NodeJS.Timeout | null = null;
+        let connectTimeout: NodeJS.Timeout | null = null;
 
-        const connectTimeout = setTimeout(() => {
+        if (!isIncoming) {
+            supabase.functions.invoke('notify-call-message', {
+                body: {
+                    orderId,
+                    eventType: 'call',
+                    callerId,
+                    callerRole,
+                    callerName: callerRole === 'driver' ? 'Your Mate' : 'Customer'
+                }
+            }).catch((pErr) => {
+                console.warn('Backend call push notification dispatch error:', pErr);
+            });
+
+            // Progression: 'initiating' -> 'ringing'
+            ringingTimeout = setTimeout(() => {
+                setCallState('ringing');
+            }, 1200);
+
+            // Simulation fallback: If callee does not explicitly answer after 10s, connect
+            connectTimeout = setTimeout(() => {
+                setCallState((prev) => (prev === 'ringing' ? 'connected' : prev));
+            }, 10000);
+        } else {
             setCallState('connected');
-        }, 3200);
+        }
 
         return () => {
-            clearTimeout(ringingTimeout);
-            clearTimeout(connectTimeout);
+            if (ringingTimeout) clearTimeout(ringingTimeout);
+            if (connectTimeout) clearTimeout(connectTimeout);
             supabase.removeChannel(channel);
         };
-    }, [visible, orderId]);
+    }, [visible, orderId, isIncoming]);
 
     // Timer while connected
     useEffect(() => {
