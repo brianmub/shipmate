@@ -52,13 +52,13 @@ export const orderService = {
 
         // Non-blocking sync to users.phone if currently null
         if (customerPhone && orderData.customer_id) {
-            supabase
-                .from('users')
-                .update({ phone: customerPhone })
-                .eq('id', orderData.customer_id)
-                .is('phone', null)
-                .then(() => {})
-                .catch(() => {});
+            Promise.resolve(
+                supabase
+                    .from('users')
+                    .update({ phone: customerPhone })
+                    .eq('id', orderData.customer_id)
+                    .is('phone', null)
+            ).catch(() => {});
         }
 
         // Dispatch priority push notifications to active drivers non-blockingly
@@ -77,29 +77,41 @@ export const orderService = {
 
     /**
      * Fetch all available jobs for drivers (where status is pending).
-     * If driver is Platinum, they receive instant access to all jobs.
-     * Non-platinum drivers only see jobs after the 30-second priority window expires.
+     * Returns all active pending customer orders so the driver screen is always listening.
      */
     async getAvailableJobs(driverTier?: DriverTier) {
         const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
-        const nowIso = new Date().toISOString();
 
-        let query = supabase
+        const { data, error } = await supabase
             .from('orders')
             .select('*')
             .eq('status', 'pending')
             .gt('created_at', twelveHoursAgo)
             .order('created_at', { ascending: false });
 
-        // Non-platinum drivers only see jobs where priority window is null or has expired
-        if (driverTier !== 'platinum') {
-            query = query.or(`priority_window_ends_at.is.null,priority_window_ends_at.lte.${nowIso}`);
-        }
-
-        const { data, error } = await query;
-
         if (error) throw error;
         return data as Order[];
+    },
+
+    /**
+     * Subscribe to real-time available jobs for drivers with unique channel name
+     */
+    subscribeToAvailableJobs(onEvent: (payload: any) => void) {
+        const channelId = `driver_available_jobs_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        return supabase
+            .channel(channelId)
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'orders',
+                },
+                (payload) => {
+                    onEvent(payload);
+                }
+            )
+            .subscribe();
     },
 
     /**

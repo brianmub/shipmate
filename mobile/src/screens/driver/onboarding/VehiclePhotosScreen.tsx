@@ -89,7 +89,7 @@ export const VehiclePhotosScreen = ({ navigation }: any) => {
                     "Your Mate application is now under review. We will notify you once approved!",
                     [{ text: "Great!", onPress: () => {
                         try {
-                            navigation.navigate('Dashboard');
+                            navigation.navigate('Jobs');
                         } catch (e) {
                             // State change will handle navigation if needed
                         }

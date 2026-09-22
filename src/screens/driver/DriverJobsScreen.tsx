@@ -13,7 +13,8 @@ import {
     AppStateStatus,
     Switch,
     Modal,
-    Dimensions
+    Dimensions,
+    Vibration
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -64,6 +65,17 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
 
     const isLockedOut = (walletBalance !== null && walletBalance <= 0.25) || walletStatus === 'locked';
     const isLowBalance = !isLockedOut && walletBalance !== null && walletBalance <= 3.00;
+
+    const isOnlineRef = useRef(isOnline);
+    isOnlineRef.current = isOnline;
+    const walletBalanceRef = useRef(walletBalance);
+    walletBalanceRef.current = walletBalance;
+    const walletStatusRef = useRef(walletStatus);
+    walletStatusRef.current = walletStatus;
+    const driverTierRef = useRef(driverTier);
+    driverTierRef.current = driverTier;
+    const isLockedOutRef = useRef(isLockedOut);
+    isLockedOutRef.current = isLockedOut;
 
     const [currentTime, setCurrentTime] = useState(Date.now());
     const [selectedJob, setSelectedJob] = useState<any>(null);
@@ -346,26 +358,72 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
         }
     };
 
-    const fetchPendingJobs = async (tierOverride?: DriverTier) => {
+    const fetchPendingJobs = async (tierOverride?: DriverTier, showLoading: boolean = false) => {
         try {
-            setLoading(true);
-            const tier = tierOverride || driverTier;
+            if (showLoading) setLoading(true);
+            const tier = tierOverride || driverTierRef.current || driverTier;
             const data = await orderService.getAvailableJobs(tier);
             setJobs(data || []);
         } catch (error: any) {
             console.error('Error fetching jobs:', error.message);
         } finally {
-            setLoading(false);
+            if (showLoading) setLoading(false);
         }
     };
 
     // 9. Live GPS Location Tracking & Map Centering
     const syncDriverGpsLocation = async () => {
-        if (Platform.OS === 'web') return;
+        if (Platform.OS === 'web') {
+            if (typeof navigator !== 'undefined' && navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        const coords = {
+                            latitude: pos.coords.latitude,
+                            longitude: pos.coords.longitude,
+                            heading: pos.coords.heading ?? 0,
+                        };
+                        setDriverLocation(coords);
+                        setLocationPermissionGranted(true);
+                        mapRef.current?.animateToRegion({
+                            latitude: coords.latitude,
+                            longitude: coords.longitude,
+                            latitudeDelta: 0.04,
+                            longitudeDelta: 0.04,
+                        }, 500);
+                        if (user?.id && isOnlineRef.current) {
+                            userService.updateDriverLocation(user.id, coords.latitude, coords.longitude, coords.heading ?? 0).catch(() => {});
+                        }
+                    },
+                    (err) => console.warn('Web geolocation warning:', err),
+                    { enableHighAccuracy: true, timeout: 8000 }
+                );
+            }
+            return;
+        }
+
         try {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status === 'granted') {
                 setLocationPermissionGranted(true);
+
+                // 1. Instant fix from cached last-known position so map opens immediately on driver
+                const lastKnown = await Location.getLastKnownPositionAsync().catch(() => null);
+                if (lastKnown?.coords) {
+                    const cachedCoords = {
+                        latitude: lastKnown.coords.latitude,
+                        longitude: lastKnown.coords.longitude,
+                        heading: lastKnown.coords.heading ?? 0,
+                    };
+                    setDriverLocation(cachedCoords);
+                    mapRef.current?.animateToRegion({
+                        latitude: cachedCoords.latitude,
+                        longitude: cachedCoords.longitude,
+                        latitudeDelta: 0.04,
+                        longitudeDelta: 0.04,
+                    }, 350);
+                }
+
+                // 2. High-accuracy real-time GPS fix
                 const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
                 if (loc?.coords) {
                     const coords = {
@@ -375,7 +433,7 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
                     };
                     setDriverLocation(coords);
 
-                    // Animate map camera immediately to Mate's current GPS position
+                    // Animate map camera smoothly to Mate's current GPS position
                     mapRef.current?.animateToRegion({
                         latitude: coords.latitude,
                         longitude: coords.longitude,
@@ -383,7 +441,7 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
                         longitudeDelta: 0.04,
                     }, 600);
 
-                    if (user && isOnline) {
+                    if (user && isOnlineRef.current) {
                         userService.updateDriverLocation(user.id, coords.latitude, coords.longitude, coords.heading ?? 0).catch(() => {});
                     }
                 }
@@ -497,41 +555,99 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
         }
     };
 
-    // 10. Load screen data on mount & focus
+    // 10. Load screen data on mount & focus + Realtime order listening
     useEffect(() => {
-        const loadScreenData = async () => {
+        let mounted = true;
+
+        const loadScreenData = async (showLoading = false) => {
             checkVerificationStatus();
             checkWalletStatus();
             fetchDriverOnlineStatus();
             const tier = await checkDriverTier();
-            fetchPendingJobs(tier);
+            await fetchPendingJobs(tier, showLoading);
         };
 
-        const unsubscribe = navigation.addListener('focus', () => {
-            loadScreenData();
+        // Load initially; only show spinner if we have no jobs yet
+        loadScreenData(jobs.length === 0);
+
+        const unsubscribeFocus = navigation.addListener('focus', () => {
+            loadScreenData(false);
             syncDriverGpsLocation();
         });
 
-        loadScreenData();
-
-        // Realtime subscription for incoming orders & popups
+        // Unique channel name per mount so connections never conflict
+        const channelName = `driver_jobs_orders_${user?.id || 'courier'}_${Date.now()}`;
         const channel = supabase
-            .channel('public:driver_jobs_screen_orders')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
-                fetchPendingJobs();
-                if (payload.eventType === 'INSERT' && payload.new && payload.new.status === 'pending') {
-                    if (isOnline && !((walletBalance !== null && walletBalance <= 0.25) || walletStatus === 'locked')) {
-                        setIncomingOrder(payload.new);
+            .channel(channelName)
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'orders' },
+                (payload: any) => {
+                    if (!mounted) return;
+
+                    // 1. Zero-latency instant state update on customer actions
+                    if (payload.eventType === 'INSERT') {
+                        const newJob = payload.new;
+                        if (newJob && newJob.status === 'pending') {
+                            setJobs((prevJobs) => {
+                                if (prevJobs.some((j) => j.id === newJob.id)) return prevJobs;
+                                return [newJob, ...prevJobs];
+                            });
+
+                            // Tactile haptic vibration for incoming customer order
+                            try {
+                                Vibration.vibrate([0, 300, 150, 300]);
+                            } catch (_) {}
+
+                            // If driver is online & float is active, open incoming offer sheet
+                            if (isOnlineRef.current && !isLockedOutRef.current) {
+                                setIncomingOrder(newJob);
+                            }
+                        }
+                    } else if (payload.eventType === 'UPDATE') {
+                        const updatedJob = payload.new;
+                        if (updatedJob) {
+                            if (updatedJob.status !== 'pending') {
+                                // Order was claimed by another driver, cancelled by customer, or completed
+                                setJobs((prevJobs) => prevJobs.filter((j) => j.id !== updatedJob.id));
+                                setIncomingOrder((prev: any) => (prev?.id === updatedJob.id ? null : prev));
+                                setSelectedJob((prev: any) => (prev?.id === updatedJob.id ? null : prev));
+                            } else {
+                                // Order updated while still pending (e.g. fare/notes changed)
+                                setJobs((prevJobs) => prevJobs.map((j) => (j.id === updatedJob.id ? updatedJob : j)));
+                                setIncomingOrder((prev: any) => (prev?.id === updatedJob.id ? updatedJob : prev));
+                                setSelectedJob((prev: any) => (prev?.id === updatedJob.id ? updatedJob : prev));
+                            }
+                        }
+                    } else if (payload.eventType === 'DELETE') {
+                        const deletedId = payload.old?.id;
+                        if (deletedId) {
+                            setJobs((prevJobs) => prevJobs.filter((j) => j.id !== deletedId));
+                            setIncomingOrder((prev: any) => (prev?.id === deletedId ? null : prev));
+                            setSelectedJob((prev: any) => (prev?.id === deletedId ? null : prev));
+                        }
                     }
+
+                    // 2. Silent non-blocking background sync to reconcile
+                    fetchPendingJobs(undefined, false);
                 }
-            })
+            )
             .subscribe();
 
+        // Active background polling heartbeat every 6 seconds as a reliable backup
+        const pollInterval = setInterval(() => {
+            if (mounted) {
+                fetchPendingJobs(undefined, false);
+            }
+        }, 6000);
+
         return () => {
-            unsubscribe();
+            mounted = false;
+            unsubscribeFocus();
+            clearInterval(pollInterval);
             supabase.removeChannel(channel);
         };
-    }, [navigation, user, isOnline]);
+    }, [navigation, user?.id]);
 
     // Recenter map on Mate's current GPS location
     const handleRecenterOnMe = () => {
@@ -859,6 +975,18 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
                     </TouchableOpacity>
                 </View>
 
+                {/* Live Radar Listening Indicator */}
+                {isOnline && !isLockedOut && (
+                    <View style={styles.listeningRadarBanner}>
+                        <View style={styles.radarPulseDot}>
+                            <View style={styles.radarInnerDot} />
+                        </View>
+                        <Text style={styles.listeningRadarText}>
+                            LIVE RADAR ACTIVE • LISTENING TO CUSTOMERS
+                        </Text>
+                    </View>
+                )}
+
                 {/* Low Float Warning Banner */}
                 {isLowBalance && (
                     <TouchableOpacity
@@ -1040,11 +1168,18 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
                         </View>
                     ) : (
                         <View style={styles.bottomEmptyPill}>
-                            <Text style={styles.bottomEmptyPillText}>
-                                {!isOnline
-                                    ? '🔴 You are offline. Toggle ONLINE above to receive job requests.'
-                                    : '🔍 Scanning for live customer requests in your area...'}
-                            </Text>
+                            <View style={styles.bottomEmptyListeningRow}>
+                                {isOnline && !isLockedOut && (
+                                    <View style={styles.radarPulseDot}>
+                                        <View style={styles.radarInnerDot} />
+                                    </View>
+                                )}
+                                <Text style={styles.bottomEmptyPillText}>
+                                    {!isOnline
+                                        ? '🔴 You are offline. Toggle ONLINE above to receive customer requests.'
+                                        : '🟢 Live Radar Active — Listening for customer requests in your area...'}
+                                </Text>
+                            </View>
                         </View>
                     )}
                 </View>
@@ -1475,10 +1610,49 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         fontSize: 13,
     },
+    listeningRadarBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#ECFDF5',
+        borderColor: '#A7F3D0',
+        borderWidth: 1,
+        paddingVertical: 7,
+        paddingHorizontal: 14,
+        borderRadius: 20,
+        alignSelf: 'center',
+        marginTop: 10,
+        shadowColor: '#10B981',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.12,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    listeningRadarText: {
+        color: '#047857',
+        fontSize: 11,
+        fontWeight: '800',
+        letterSpacing: 0.8,
+    },
+    radarPulseDot: {
+        width: 14,
+        height: 14,
+        borderRadius: 7,
+        backgroundColor: 'rgba(16, 185, 129, 0.25)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 8,
+    },
+    radarInnerDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#10B981',
+    },
     bottomEmptyPill: {
         marginHorizontal: 20,
         marginBottom: 20,
-        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+        backgroundColor: 'rgba(15, 23, 42, 0.92)',
         borderRadius: 20,
         paddingVertical: 12,
         paddingHorizontal: 16,
@@ -1488,6 +1662,11 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 5,
         elevation: 6,
+    },
+    bottomEmptyListeningRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     bottomEmptyPillText: {
         color: '#FFFFFF',

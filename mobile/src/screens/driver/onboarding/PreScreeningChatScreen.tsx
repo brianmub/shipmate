@@ -133,7 +133,7 @@ export const PreScreeningChatScreen = ({ navigation }: any) => {
                 "Your details and pre-screening answers are under review. We will notify you once approved!",
                 [{ text: "Awesome!", onPress: () => {
                     try {
-                        navigation.navigate('Dashboard');
+                        navigation.navigate('Jobs');
                     } catch (e) {
                         // State transition will navigate automatically
                     }
