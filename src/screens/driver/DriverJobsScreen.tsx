@@ -224,34 +224,173 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
         }
     }, [route?.params?.orderId, jobs]);
 
-    // 5. Active viewer presence channel
+    // 5. Active viewer presence channel — tracks on request:{requestId} for live bidding presence
     useEffect(() => {
         if (activeChannelRef.current) {
+            console.log(`[RealtimeLifecycle:UNSUBSCRIBE] (app: mate, reason: prior_channel_cleanup)`);
             supabase.removeChannel(activeChannelRef.current);
             activeChannelRef.current = null;
         }
 
         const activeViewingJobId = offerModalVisible && selectedJob ? selectedJob.id : expandedJobId;
+        const activeJob = offerModalVisible && selectedJob ? selectedJob : jobs.find(j => j.id === expandedJobId);
 
         if (activeViewingJobId && user) {
-            const channel = supabase.channel(`order_viewers:${activeViewingJobId}`);
+            console.log(`[RealtimeLifecycle:SUBSCRIBE] request:${activeViewingJobId} (app: mate, reason: viewing_job)`);
+            const channel = supabase.channel(`request:${activeViewingJobId}`, {
+                config: { presence: { key: user.id } },
+            });
             activeChannelRef.current = channel;
 
-            channel.subscribe(async (status) => {
-                if (status === 'SUBSCRIBED') {
-                    await channel.track({
-                        user: {
-                            id: user.id,
-                            full_name: user.user_metadata?.full_name || user.email || 'Courier'
+            channel
+                .on('presence', { event: 'sync' }, () => {
+                    // Sync handled; driver side doesn't need to read state
+                })
+                .on('broadcast', { event: 'request_accepted' }, ({ payload }: any) => {
+                    if (payload && payload.mate_id !== user.id) {
+                        // This request went to someone else — remove the card immediately
+                        const targetId = payload.request_id || activeViewingJobId;
+                        console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${targetId} (app: mate, reason: request_accepted_by_other)`);
+                        if (activeChannelRef.current) {
+                            supabase.removeChannel(activeChannelRef.current);
+                            activeChannelRef.current = null;
                         }
-                    });
+                        setJobs((prevJobs) => prevJobs.filter((j) => j.id !== targetId));
+                        if (selectedJob?.id === targetId) {
+                            setOfferModalVisible(false);
+                            setSelectedJob(null);
+                        }
+                        if (expandedJobId === targetId) {
+                            setExpandedJobId(null);
+                        }
+                    }
+                })
+                .subscribe(async (status) => {
+                    if (status === 'SUBSCRIBED') {
+                        await channel.track({
+                            mate_id: user.id,
+                            name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Courier',
+                            avatar_url: user.user_metadata?.avatar_url || null,
+                            joined_at: Date.now(),
+                        });
+                    }
+                });
+
+            // Client-side auto-unsubscribe when request expires
+            let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+            if (activeJob?.expires_at) {
+                const msUntilExpiry = new Date(activeJob.expires_at).getTime() - Date.now();
+                if (msUntilExpiry > 0) {
+                    expiryTimer = setTimeout(() => {
+                        if (activeChannelRef.current === channel) {
+                            console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${activeViewingJobId} (app: mate, reason: request_timer_expired)`);
+                            supabase.removeChannel(channel);
+                            activeChannelRef.current = null;
+                            // Auto-decline expired request card
+                            handleDeclineJob(activeViewingJobId);
+                        }
+                    }, msUntilExpiry);
+                } else {
+                    // Already expired — don't stay subscribed
+                    console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${activeViewingJobId} (app: mate, reason: request_already_expired)`);
+                    supabase.removeChannel(channel);
+                    activeChannelRef.current = null;
+                    handleDeclineJob(activeViewingJobId);
+                }
+            }
+
+            const unsubscribeBlur = navigation?.addListener ? navigation.addListener('blur', () => {
+                if (activeChannelRef.current) {
+                    console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${activeViewingJobId} (app: mate, reason: navigation_blur)`);
+                    supabase.removeChannel(activeChannelRef.current);
+                    activeChannelRef.current = null;
+                }
+                setOfferModalVisible(false);
+                setSelectedJob(null);
+                setExpandedJobId(null);
+            }) : undefined;
+
+            const appStateSub = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
+                if (nextAppState.match(/inactive|background/)) {
+                    // On iOS where background sockets are not preserved, cleanly tear down
+                    if (Platform.OS === 'ios' && activeChannelRef.current) {
+                        console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${activeViewingJobId} (app: mate, reason: app_backgrounded_ios)`);
+                        supabase.removeChannel(activeChannelRef.current);
+                        activeChannelRef.current = null;
+                    }
+                } else if (nextAppState === 'active') {
+                    // On foreground resume:
+                    // Case 1: Channel was torn down or dropped -> re-subscribe and re-track
+                    if (!activeChannelRef.current && activeViewingJobId && user) {
+                        console.log(`[RealtimeLifecycle:SUBSCRIBE] request:${activeViewingJobId} (app: mate, reason: app_foreground_resume)`);
+                        const resumedChannel = supabase.channel(`request:${activeViewingJobId}`, {
+                            config: { presence: { key: user.id } },
+                        });
+                        activeChannelRef.current = resumedChannel;
+
+                        resumedChannel
+                            .on('presence', { event: 'sync' }, () => {})
+                            .on('broadcast', { event: 'request_accepted' }, ({ payload }: any) => {
+                                if (payload && payload.mate_id !== user.id) {
+                                    const targetId = payload.request_id || activeViewingJobId;
+                                    console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${targetId} (app: mate, reason: request_accepted_by_other)`);
+                                    if (activeChannelRef.current) {
+                                        supabase.removeChannel(activeChannelRef.current);
+                                        activeChannelRef.current = null;
+                                    }
+                                    setJobs((prevJobs) => prevJobs.filter((j) => j.id !== targetId));
+                                    if (selectedJob?.id === targetId) {
+                                        setOfferModalVisible(false);
+                                        setSelectedJob(null);
+                                    }
+                                    if (expandedJobId === targetId) {
+                                        setExpandedJobId(null);
+                                    }
+                                }
+                            })
+                            .subscribe(async (status) => {
+                                if (status === 'SUBSCRIBED') {
+                                    await resumedChannel.track({
+                                        mate_id: user.id,
+                                        name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Courier',
+                                        avatar_url: user.user_metadata?.avatar_url || null,
+                                        joined_at: Date.now(),
+                                    });
+                                }
+                            });
+                    } else if (activeChannelRef.current && user) {
+                        // Case 2: Channel survived backgrounding (e.g. Android foreground service) -> re-track presence to refresh presence lease
+                        try {
+                            await activeChannelRef.current.track({
+                                mate_id: user.id,
+                                name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Courier',
+                                avatar_url: user.user_metadata?.avatar_url || null,
+                                joined_at: Date.now(),
+                            });
+                        } catch (retrackErr) {
+                            console.warn('Re-track on foreground warning:', retrackErr);
+                        }
+                    }
                 }
             });
+
+            return () => {
+                if (unsubscribeBlur) unsubscribeBlur();
+                if (appStateSub?.remove) appStateSub.remove();
+                if (expiryTimer) clearTimeout(expiryTimer);
+                if (activeChannelRef.current === channel) {
+                    console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${activeViewingJobId} (app: mate, reason: effect_cleanup)`);
+                    supabase.removeChannel(channel);
+                    activeChannelRef.current = null;
+                }
+            };
         }
 
         return () => {
             if (activeChannelRef.current) {
+                console.log(`[RealtimeLifecycle:UNSUBSCRIBE] (app: mate, reason: inactive_cleanup)`);
                 supabase.removeChannel(activeChannelRef.current);
+                activeChannelRef.current = null;
             }
         };
     }, [expandedJobId, offerModalVisible, selectedJob, user]);
@@ -511,6 +650,18 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
     }, [isOnline, user?.id]);
 
     const handleDeclineJob = (jobId: string) => {
+        if (activeChannelRef.current && (expandedJobId === jobId || selectedJob?.id === jobId)) {
+            console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${jobId} (app: mate, reason: mate_declined_job)`);
+            supabase.removeChannel(activeChannelRef.current);
+            activeChannelRef.current = null;
+        }
+        if (expandedJobId === jobId) {
+            setExpandedJobId(null);
+        }
+        if (selectedJob?.id === jobId) {
+            setSelectedJob(null);
+            setOfferModalVisible(false);
+        }
         setDeclinedJobIds(prev => [...prev, jobId]);
     };
 
@@ -634,6 +785,35 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
             )
             .subscribe();
 
+        // Subscribe to live bidding request broadcasts (jobs:{zone_id}) from create-request Edge Function
+        const zoneChannel = supabase
+            .channel(`jobs:harare`)
+            .on('broadcast', { event: 'new_request' }, ({ payload }: any) => {
+                if (!mounted || !payload?.request_id) return;
+                const newReqJob = {
+                    id: payload.request_id,
+                    service_type: 'delivery',
+                    pickup_address: payload.pickup_location?.address || 'Pickup location',
+                    dropoff_address: payload.dropoff_location?.address || 'Drop-off location',
+                    pickup_latitude: payload.pickup_location?.latitude,
+                    pickup_longitude: payload.pickup_location?.longitude,
+                    dropoff_latitude: payload.dropoff_location?.latitude,
+                    dropoff_longitude: payload.dropoff_location?.longitude,
+                    estimated_cost: payload.base_price,
+                    status: 'searching',
+                    expires_at: payload.expires_at,
+                    created_at: new Date().toISOString(),
+                };
+                setJobs((prevJobs) => {
+                    if (prevJobs.some((j) => j.id === newReqJob.id)) return prevJobs;
+                    return [newReqJob, ...prevJobs];
+                });
+                try {
+                    Vibration.vibrate([0, 300, 150, 300]);
+                } catch (_) {}
+            })
+            .subscribe();
+
         // Active background polling heartbeat every 6 seconds as a reliable backup
         const pollInterval = setInterval(() => {
             if (mounted) {
@@ -646,6 +826,7 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
             unsubscribeFocus();
             clearInterval(pollInterval);
             supabase.removeChannel(channel);
+            supabase.removeChannel(zoneChannel);
         };
     }, [navigation, user?.id]);
 
@@ -1293,6 +1474,7 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
                 onClose={() => setOfferModalVisible(false)}
                 order={selectedJob}
                 onOfferSubmitted={fetchPendingJobs}
+                presenceChannel={activeChannelRef.current}
             />
         </View>
     );

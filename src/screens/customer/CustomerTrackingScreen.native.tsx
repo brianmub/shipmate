@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, StatusBar, Platform, Linking, Alert, Image, Modal, TextInput, BackHandler } from 'react-native';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, StatusBar, Platform, Linking, Alert, Image, Modal, TextInput, BackHandler, AppState, AppStateStatus } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, Circle } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
@@ -83,6 +83,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     }, [navigation, order?.status]);
 
     const [viewingCouriers, setViewingCouriers] = useState<any[]>([]);
+    const [liveBids, setLiveBids] = useState<any[]>([]);
     const [offers, setOffers] = useState<any[]>([]);
     const [offersLoading, setOffersLoading] = useState(false);
     const [acknowledging, setAcknowledging] = useState(false);
@@ -95,6 +96,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     const mapRef = useRef<MapView>(null);
     const animFrameRef = useRef<number | null>(null);
     const prevCoordRef = useRef<{ latitude: number; longitude: number } | null>(null);
+    const presenceChannelRef = useRef<any>(null);
 
     // Nearby Available Mates & inDrive Matchmaking States
     const [nearbyDrivers, setNearbyDrivers] = useState<any[]>([]);
@@ -208,15 +210,128 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     const handleAcceptOffer = async (offer: any) => {
         try {
             setLoading(true);
-            await orderService.acceptOffer(orderId, offer.id, offer.driver_id);
-            Alert.alert("Success", "Mate assigned successfully! They are on their way.");
-            fetchOrder();
+            const mateId = offer.driver_id || offer.driver?.id || offer.mate_id;
+            const acceptedAmount = Number(offer.offer_amount || offer.amount);
+
+            // Step 5: Atomic Accept via Edge Function
+            const { data, error } = await supabase.functions.invoke('accept-request', {
+                body: {
+                    request_id: orderId,
+                    mate_id: mateId,
+                    accepted_amount: acceptedAmount,
+                },
+            });
+
+            // Handle 409 Conflict path
+            if (error) {
+                let errorMsg = error.message;
+                try {
+                    if (error.context && typeof error.context.json === 'function') {
+                        const errJson = await error.context.json();
+                        if (errJson?.error) errorMsg = errJson.error;
+                    }
+                } catch (_) {}
+
+                if (error.status === 409 || errorMsg?.includes('unavailable') || errorMsg?.includes('REQUEST_ALREADY_ACCEPTED_OR_EXPIRED')) {
+                    if (presenceChannelRef.current && errorMsg?.includes('REQUEST_ALREADY_ACCEPTED_OR_EXPIRED')) {
+                        console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${orderId} (app: customer, reason: request_conflict_expired)`);
+                        supabase.removeChannel(presenceChannelRef.current);
+                        presenceChannelRef.current = null;
+                    }
+                    Alert.alert(
+                        "Courier Unavailable",
+                        "This driver just became unavailable, please pick another."
+                    );
+                    setLiveBids((prev) => prev.filter((b) => b.mate_id !== mateId));
+                    setOffers((prev) => prev.filter((o) => (o.driver_id || o.driver?.id) !== mateId));
+                    return;
+                }
+
+                // Fallback for legacy order_offers
+                console.warn('accept-request edge function error:', error.message);
+                try {
+                    await orderService.acceptOffer(orderId, offer.id, mateId);
+                    Alert.alert("Success", "Mate assigned successfully! They are on their way.");
+                    fetchOrder();
+                    return;
+                } catch (legacyErr: any) {
+                    Alert.alert("Error", errorMsg || legacyErr.message);
+                    return;
+                }
+            }
+
+            if (data?.success) {
+                // Step 6: Immediately tear down presence channel on assignment success
+                if (presenceChannelRef.current) {
+                    console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${orderId} (app: customer, reason: request_accepted_success)`);
+                    supabase.removeChannel(presenceChannelRef.current);
+                    presenceChannelRef.current = null;
+                }
+                Alert.alert(
+                    "Offer Confirmed! 🎉",
+                    `${data.mate?.full_name || 'Courier'} has been assigned to your delivery.`
+                );
+                setOrder((prev: any) => prev ? ({
+                    ...prev,
+                    status: 'driver_assigned',
+                    driver_id: mateId,
+                    driver: data.mate || prev.driver,
+                    accepted_amount: acceptedAmount,
+                }) : prev);
+                fetchOrder();
+            } else if (data?.code === 'REQUEST_ALREADY_ACCEPTED_OR_EXPIRED') {
+                Alert.alert(
+                    "Courier Unavailable",
+                    "This driver just became unavailable, please pick another."
+                );
+                setLiveBids((prev) => prev.filter((b) => b.mate_id !== mateId));
+                setOffers((prev) => prev.filter((o) => (o.driver_id || o.driver?.id) !== mateId));
+            }
         } catch (error: any) {
             Alert.alert("Error", error.message);
         } finally {
             setLoading(false);
         }
     };
+
+    // Combine standard order offers with real-time live counter-offer bids (Step 4)
+    const combinedOffers = useMemo(() => {
+        const result = [...offers];
+
+        liveBids.forEach((bid) => {
+            const existingIdx = result.findIndex(
+                (o) => o.driver_id === bid.mate_id || o.driver?.id === bid.mate_id
+            );
+
+            const formattedBidOffer = {
+                id: `live_bid_${bid.mate_id}`,
+                order_id: orderId,
+                driver_id: bid.mate_id,
+                offer_amount: Number(bid.amount),
+                pickup_time_estimate: bid.pickup_time_estimate || bid.eta || 10,
+                driver_latitude: bid.driver_latitude,
+                driver_longitude: bid.driver_longitude,
+                status: 'pending',
+                is_live_bid: true,
+                driver: {
+                    id: bid.mate_id,
+                    full_name: bid.driver_name || 'Courier',
+                    avatar_url: bid.driver_avatar || null,
+                    average_rating: 5.0,
+                    tier: 'standard',
+                },
+            };
+
+            if (existingIdx >= 0) {
+                // Upsert: latest bid replaces earlier offer
+                result[existingIdx] = { ...result[existingIdx], ...formattedBidOffer };
+            } else {
+                result.unshift(formattedBidOffer);
+            }
+        });
+
+        return result;
+    }, [offers, liveBids, orderId]);
 
     const handleAcknowledgeDelivery = () => {
         setShowRatingModal(true);
@@ -288,6 +403,12 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
         if (!order || !user) return;
         setCancelling(true);
         try {
+            // Step 6: Immediately tear down presence channel on manual cancellation
+            if (presenceChannelRef.current) {
+                console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${orderId} (app: customer, reason: manual_cancellation)`);
+                supabase.removeChannel(presenceChannelRef.current);
+                presenceChannelRef.current = null;
+            }
             const result = await orderService.cancelOrderByCustomer(order.id, user.id, cancelReason);
             setCancelModalVisible(false);
             const fee = result?.cancellation_fee || 0;
@@ -391,26 +512,6 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
             })
             .subscribe();
 
-        const presenceChannel = supabase.channel(`order_viewers:${orderId}`);
-        presenceChannel
-            .on('presence', { event: 'sync' }, () => {
-                const state = presenceChannel.presenceState();
-                const couriers: any[] = [];
-                Object.keys(state).forEach((key) => {
-                    state[key].forEach((presence: any) => {
-                        if (presence.user) {
-                            couriers.push(presence.user);
-                        }
-                    });
-                });
-                // Deduplicate by ID
-                const uniqueCouriers = couriers.filter(
-                    (c, index, self) => self.findIndex((t) => t.id === c.id) === index
-                );
-                setViewingCouriers(uniqueCouriers);
-            })
-            .subscribe();
-
         // inDrive-style progressive matchmaking timer
         const timer = setInterval(() => {
             setSearchElapsedSeconds((prev) => {
@@ -418,6 +519,12 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                 if (next >= 60) {
                     setSearchPhase('timeout');
                     setSearchRadiusKm(25);
+                    // Step 6: Teardown channel when matchmaking reaches timeout
+                    if (presenceChannelRef.current) {
+                        console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${orderId} (app: customer, reason: search_timeout_expired)`);
+                        supabase.removeChannel(presenceChannelRef.current);
+                        presenceChannelRef.current = null;
+                    }
                 } else if (next >= 35) {
                     setSearchPhase('wide');
                     setSearchRadiusKm(20);
@@ -441,11 +548,115 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
             supabase.removeChannel(channel);
             supabase.removeChannel(offersChannel);
             supabase.removeChannel(driversChannel);
-            supabase.removeChannel(presenceChannel);
             clearInterval(timer);
             clearInterval(pollInterval);
         };
     }, [orderId, searchRadiusKm]);
+
+    // Dedicated Presence & Live Bidding Channel Lifecycle (Step 6)
+    useEffect(() => {
+        if (!orderId) return;
+
+        const isSearching = !order || order.status === 'searching' || order.status === 'pending';
+        if (!isSearching) {
+            if (presenceChannelRef.current) {
+                console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${orderId} (app: customer, reason: status_not_searching)`);
+                supabase.removeChannel(presenceChannelRef.current);
+                presenceChannelRef.current = null;
+            }
+            return;
+        }
+
+        if (presenceChannelRef.current) {
+            console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${orderId} (app: customer, reason: refreshing_subscription)`);
+            supabase.removeChannel(presenceChannelRef.current);
+            presenceChannelRef.current = null;
+        }
+
+        console.log(`[RealtimeLifecycle:SUBSCRIBE] request:${orderId} (app: customer, reason: mount_searching)`);
+        const channel = supabase.channel(`request:${orderId}`);
+        presenceChannelRef.current = channel;
+
+        const syncViewersFromPresence = (targetChannel: any) => {
+            if (!targetChannel) return;
+            const state = targetChannel.presenceState();
+            const viewers: any[] = [];
+            Object.values(state).forEach((presences: any[]) => {
+                presences.forEach((presence: any) => {
+                    viewers.push({
+                        id: presence.mate_id || presence.presence_ref,
+                        full_name: presence.name || 'Courier',
+                        avatar_url: presence.avatar_url || null,
+                    });
+                });
+            });
+            const uniqueViewers = viewers.filter(
+                (v, index, self) => self.findIndex((t) => t.id === v.id) === index
+            );
+            setViewingCouriers(uniqueViewers);
+        };
+
+        channel
+            .on('presence', { event: 'sync' }, () => {
+                syncViewersFromPresence(channel);
+            })
+            .on('broadcast', { event: 'bid' }, ({ payload }) => {
+                if (!payload || !payload.mate_id) return;
+                const bidAmount = Number(payload.amount);
+                if (isNaN(bidAmount) || bidAmount <= 0) return;
+                if (order?.expires_at && new Date(order.expires_at).getTime() <= Date.now()) return;
+
+                setLiveBids((prevBids) => {
+                    const existingIdx = prevBids.findIndex((b) => b.mate_id === payload.mate_id);
+                    const newBidEntry = {
+                        ...payload,
+                        amount: bidAmount,
+                        updated_at: Date.now(),
+                    };
+                    if (existingIdx >= 0) {
+                        const updated = [...prevBids];
+                        updated[existingIdx] = newBidEntry;
+                        return updated;
+                    }
+                    return [...prevBids, newBidEntry];
+                });
+            })
+            .subscribe();
+
+        const unsubscribeBlur = navigation?.addListener ? navigation.addListener('blur', () => {
+            if (presenceChannelRef.current) {
+                console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${orderId} (app: customer, reason: navigation_blur)`);
+                supabase.removeChannel(presenceChannelRef.current);
+                presenceChannelRef.current = null;
+            }
+        }) : undefined;
+
+        const unsubscribeBeforeRemove = navigation?.addListener ? navigation.addListener('beforeRemove', () => {
+            if (presenceChannelRef.current) {
+                console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${orderId} (app: customer, reason: navigation_before_remove)`);
+                supabase.removeChannel(presenceChannelRef.current);
+                presenceChannelRef.current = null;
+            }
+        }) : undefined;
+
+        const appStateSub = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+            if (nextAppState === 'active' && presenceChannelRef.current) {
+                // Step 7: Re-sync presenceState on resume from background rather than trusting stale in-memory state
+                syncViewersFromPresence(presenceChannelRef.current);
+            }
+        });
+
+        return () => {
+            if (unsubscribeBlur) unsubscribeBlur();
+            if (unsubscribeBeforeRemove) unsubscribeBeforeRemove();
+            if (appStateSub?.remove) appStateSub.remove();
+            if (presenceChannelRef.current) {
+                console.log(`[RealtimeLifecycle:UNSUBSCRIBE] request:${orderId} (app: customer, reason: unmount)`);
+                supabase.removeChannel(presenceChannelRef.current);
+                presenceChannelRef.current = null;
+            }
+        };
+    }, [orderId, order?.status]);
 
     const calculateBearing = (startLat: number, startLng: number, destLat: number, destLng: number): number => {
         const startLatRad = (startLat * Math.PI) / 180;
@@ -644,7 +855,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                     )}
 
                     {/* Render Driver Bid/Offer Locations on the map */}
-                    {order.status === 'pending' && offers.map((offer) => (
+                    {order.status === 'pending' && combinedOffers.map((offer) => (
                         offer.driver_latitude && offer.driver_longitude && (
                             <Marker
                                 key={offer.id}
@@ -952,7 +1163,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                             Your previous Mate had an issue ({order.last_released_reason ? order.last_released_reason.replace(/_/g, ' ') : 'courier release'}) and released this delivery. We've prioritized your order at the top of the job queue for nearby Mates to bid immediately.
                                         </Text>
                                     </View>
-                                ) : searchPhase === 'timeout' && offers.length === 0 ? (
+                                ) : searchPhase === 'timeout' && combinedOffers.length === 0 ? (
                                     <View style={styles.timeoutCard}>
                                             <View style={styles.timeoutHeader}>
                                                 <Text style={styles.timeoutIcon}>⏳</Text>
@@ -1040,6 +1251,54 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                                 ]} />
                                             </View>
 
+                                            {/* Live Presence: Mates viewing this request */}
+                                            <View style={styles.presenceRow}>
+                                                <View style={styles.presenceIndicator}>
+                                                    <View style={[
+                                                        styles.presenceDot,
+                                                        { backgroundColor: viewingCouriers.length > 0 ? '#10B981' : '#6B7280' }
+                                                    ]} />
+                                                    <Text style={styles.presenceText}>
+                                                        {viewingCouriers.length === 0
+                                                            ? 'Broadcasting to nearby Mates...'
+                                                            : viewingCouriers.length === 1
+                                                            ? '1 Mate viewing your request'
+                                                            : `${viewingCouriers.length} Mates viewing your request`}
+                                                    </Text>
+                                                </View>
+                                                {viewingCouriers.length > 0 && (
+                                                    <View style={styles.avatarStack}>
+                                                        {viewingCouriers.slice(0, 3).map((viewer, idx) => (
+                                                            <View
+                                                                key={viewer.id || idx}
+                                                                style={[
+                                                                    styles.avatarCircle,
+                                                                    { marginLeft: idx === 0 ? 0 : -10, zIndex: 3 - idx }
+                                                                ]}
+                                                            >
+                                                                {viewer.avatar_url ? (
+                                                                    <Image
+                                                                        source={{ uri: viewer.avatar_url }}
+                                                                        style={styles.avatarImage}
+                                                                    />
+                                                                ) : (
+                                                                    <Text style={styles.avatarInitial}>
+                                                                        {(viewer.full_name || 'C').charAt(0).toUpperCase()}
+                                                                    </Text>
+                                                                )}
+                                                            </View>
+                                                        ))}
+                                                        {viewingCouriers.length > 3 && (
+                                                            <View style={[styles.avatarCircle, styles.avatarOverflow, { marginLeft: -10 }]}>
+                                                                <Text style={styles.avatarOverflowText}>
+                                                                    +{viewingCouriers.length - 3}
+                                                                </Text>
+                                                            </View>
+                                                        )}
+                                                    </View>
+                                                )}
+                                            </View>
+
                                             {/* In-Flight Tip Suggestion if taking longer */}
                                             {searchElapsedSeconds >= 20 && (
                                                 <View style={styles.quickTipBanner}>
@@ -1068,7 +1327,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                     )}
 
                                 <OfferSelectionPanel 
-                                    offers={offers}
+                                    offers={combinedOffers}
                                     onAccept={handleAcceptOffer}
                                     onSelect={(offer) => {
                                         if (offer.driver_latitude && offer.driver_longitude && mapRef.current) {
@@ -2403,6 +2662,67 @@ const styles = StyleSheet.create({
         color: '#DC2626',
         fontSize: 13,
         fontWeight: '700',
+    },
+    // Live Presence Viewer Styles
+    presenceRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 12,
+        paddingTop: 10,
+        borderTopWidth: 1,
+        borderTopColor: '#F1F5F9',
+    },
+    presenceIndicator: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    presenceDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        marginRight: 8,
+    },
+    presenceText: {
+        fontSize: 13,
+        color: '#334155',
+        fontWeight: '600',
+        flex: 1,
+    },
+    avatarStack: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginLeft: 8,
+    },
+    avatarCircle: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#E0E7FF',
+        borderWidth: 2,
+        borderColor: '#FFFFFF',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    avatarImage: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+    },
+    avatarInitial: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#4F46E5',
+    },
+    avatarOverflow: {
+        backgroundColor: '#1E293B',
+    },
+    avatarOverflowText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#FFFFFF',
     },
 });
 

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Modal, TouchableOpacity, TextInput, ActivityInd
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
+import { supabase } from '../utils/supabase';
 import { orderService } from '../services/orderService';
 import { useAuthStore } from '../store/authStore';
 
@@ -11,9 +12,10 @@ interface JobOfferModalProps {
     onClose: () => void;
     order: any;
     onOfferSubmitted: () => void;
+    presenceChannel?: any;
 }
 
-export const JobOfferModal = ({ visible, onClose, order, onOfferSubmitted }: JobOfferModalProps) => {
+export const JobOfferModal = ({ visible, onClose, order, onOfferSubmitted, presenceChannel }: JobOfferModalProps) => {
     const { user } = useAuthStore();
     const [amount, setAmount] = useState('');
     const [loading, setLoading] = useState(false);
@@ -80,8 +82,20 @@ export const JobOfferModal = ({ visible, onClose, order, onOfferSubmitted }: Job
     const handleSubmit = async () => {
         const offerAmount = parseFloat(amount);
 
-        if (isNaN(offerAmount) || offerAmount < minAmount) {
+        // Step 4 Validation: reject if amount <= 0
+        if (isNaN(offerAmount) || offerAmount <= 0) {
+            Alert.alert('Invalid Amount', 'Offer must be greater than $0.00');
+            return;
+        }
+
+        if (offerAmount < minAmount) {
             Alert.alert('Invalid Amount', `Offer must be at least $${minAmount.toFixed(2)}`);
+            return;
+        }
+
+        // Step 4 Validation: reject if request has expired
+        if (order?.expires_at && new Date(order.expires_at).getTime() <= Date.now()) {
+            Alert.alert('Request Expired', 'This request has expired and is no longer accepting bids.');
             return;
         }
 
@@ -92,14 +106,59 @@ export const JobOfferModal = ({ visible, onClose, order, onOfferSubmitted }: Job
 
         setLoading(true);
         try {
-            await orderService.submitOffer(
-                order.id, 
-                user!.id, 
-                offerAmount, 
-                calculatedETA, 
-                driverCoords.lat, 
-                driverCoords.lng
-            );
+            const requestId = order.id;
+            const mateId = user!.id;
+
+            // 1. Instant Realtime Broadcast on the request channel (send first for responsiveness)
+            const targetChannel = presenceChannel || supabase.channel(`request:${requestId}`);
+            try {
+                targetChannel.send({
+                    type: 'broadcast',
+                    event: 'bid',
+                    payload: {
+                        mate_id: mateId,
+                        amount: offerAmount,
+                        request_id: requestId,
+                        driver_name: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Courier',
+                        driver_avatar: user?.user_metadata?.avatar_url || null,
+                        pickup_time_estimate: calculatedETA,
+                        driver_latitude: driverCoords.lat,
+                        driver_longitude: driverCoords.lng,
+                    },
+                });
+            } catch (broadcastErr) {
+                console.warn('Realtime bid broadcast warning:', broadcastErr);
+            }
+
+            // 2. Fire-and-forget insert into bids table for persistence/audit (non-blocking)
+            supabase
+                .from('bids')
+                .insert({
+                    request_id: requestId,
+                    mate_id: mateId,
+                    amount: offerAmount,
+                })
+                .then(({ error }: any) => {
+                    if (error) {
+                        console.warn('Bids table persistence note:', error.message);
+                    }
+                })
+                .catch((err: any) => console.warn('Bids insert error:', err));
+
+            // 3. Also invoke legacy orderService.submitOffer for orders compatibility
+            try {
+                await orderService.submitOffer(
+                    requestId,
+                    mateId,
+                    offerAmount,
+                    calculatedETA,
+                    driverCoords.lat,
+                    driverCoords.lng
+                );
+            } catch (legacyErr: any) {
+                console.warn('Legacy submitOffer note:', legacyErr.message);
+            }
+
             Alert.alert('Offer Submitted', 'Your offer has been sent to the customer!');
             onOfferSubmitted();
             onClose();
