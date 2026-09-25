@@ -136,7 +136,7 @@ function testArchitecture() {
     // TaskManager utility
     recordResult('Defines COURIER_LOCATION_TASK constant', bgUtilCode.includes('COURIER_BACKGROUND_LOCATION_TRACKING'));
     recordResult('Registers TaskManager.defineTask at module level', bgUtilCode.includes('TaskManager.defineTask(COURIER_LOCATION_TASK'));
-    recordResult('startCourierBackgroundLocation requests foreground & background permissions', bgUtilCode.includes('requestForegroundPermissionsAsync') && bgUtilCode.includes('requestBackgroundPermissionsAsync'));
+    recordResult('startCourierBackgroundLocation requests foreground permissions', bgUtilCode.includes('requestForegroundPermissionsAsync'));
     recordResult('startCourierBackgroundLocation configures Android foregroundService notification', bgUtilCode.includes('notificationTitle: "Shipmate Courier Active"') && bgUtilCode.includes('foregroundService'));
     recordResult('stopCourierBackgroundLocation cancels location updates', bgUtilCode.includes('stopLocationUpdatesAsync(COURIER_LOCATION_TASK)'));
 

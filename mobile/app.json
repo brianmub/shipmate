@@ -3,7 +3,7 @@
     "name": "Shipmate",
     "slug": "shipmate",
     "scheme": "shipmate",
-    "version": "2.1.1",
+    "version": "2.1.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -21,7 +21,6 @@
           "location"
         ],
         "NSLocationWhenInUseUsageDescription": "Shipmate requires access to your location to show available courier jobs, calculate delivery routes, and provide real-time package tracking.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Shipmate uses your location in the background to provide live GPS tracking to customers during active delivery trips.",
         "NSCameraUsageDescription": "Shipmate requires camera access to capture photo proof of delivery and photograph driver verification documents.",
         "NSPhotoLibraryUsageDescription": "Shipmate requires photo library access to upload driver licenses, vehicle documents, and delivery proof photos.",
         "ITSAppUsesNonExemptEncryption": false
@@ -29,11 +28,10 @@
     },
     "android": {
       "package": "com.shipmate.shipmate",
-      "versionCode": 32,
+      "versionCode": 33,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",

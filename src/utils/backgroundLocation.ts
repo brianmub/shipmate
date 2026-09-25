@@ -72,22 +72,16 @@ export async function startCourierBackgroundLocation(jobId: string): Promise<{ s
     }
 
     try {
-        // 1. Request Foreground Permissions first
+        // 1. Request Foreground Permissions
         const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
         if (fgStatus !== 'granted') {
             return { success: false, error: 'FOREGROUND_PERMISSION_DENIED' };
         }
 
-        // 2. Request Background Permissions
-        const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-        if (bgStatus !== 'granted') {
-            return { success: false, error: 'BACKGROUND_PERMISSION_DENIED' };
-        }
-
-        // 3. Persist active job ID
+        // 2. Persist active job ID
         await setActiveTrackingJobId(jobId);
 
-        // 4. Check if task is already running
+        // 3. Check if task is already running
         const isRegistered = await Location.hasStartedLocationUpdatesAsync(COURIER_LOCATION_TASK);
         if (isRegistered) {
             return { success: true };
