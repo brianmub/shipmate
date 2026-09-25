@@ -5,6 +5,7 @@ export interface ChatMessage {
     order_id: string;
     sender_id: string;
     message_text: string;
+    content?: string;
     created_at: string;
     is_read?: boolean;
 }

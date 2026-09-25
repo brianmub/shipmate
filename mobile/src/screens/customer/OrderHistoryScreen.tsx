@@ -12,7 +12,7 @@ import {
     Image,
     Platform
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { supabase } from '../../utils/supabase';
@@ -35,6 +35,7 @@ const ACTIVE_TRIP_STATUSES = [
 
 export const OrderHistoryScreen = ({ navigation }: any) => {
     const { user } = useAuthStore();
+    const insets = useSafeAreaInsets();
     const [orders, setOrders] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
@@ -232,7 +233,7 @@ export const OrderHistoryScreen = ({ navigation }: any) => {
                         activeOpacity={1}
                         onPress={() => setSelectedOrder(null)}
                     />
-                    <View style={styles.detailsSheet}>
+                    <View style={[styles.detailsSheet, { paddingBottom: Math.max(insets.bottom + 12, 16) }]}>
                         <View style={styles.dragHandleWrap}>
                             <View style={styles.dragHandle} />
                         </View>
@@ -643,7 +644,7 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 28,
         borderTopRightRadius: 28,
         maxHeight: '85%',
-        paddingBottom: Platform.OS === 'ios' ? 24 : 16,
+        paddingBottom: 16,
     },
     dragHandleWrap: {
         alignItems: 'center',

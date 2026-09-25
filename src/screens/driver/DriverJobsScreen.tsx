@@ -16,7 +16,7 @@ import {
     Dimensions,
     Vibration
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
@@ -55,6 +55,7 @@ const darkMapStyle = [
 
 export const DriverJobsScreen = ({ navigation, route }: any) => {
     const { user } = useAuthStore();
+    const insets = useSafeAreaInsets();
     const [jobs, setJobs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [isVerified, setIsVerified] = useState<boolean | null>(null);
@@ -1279,7 +1280,7 @@ export const DriverJobsScreen = ({ navigation, route }: any) => {
                 </SafeAreaView>
             ) : (
                 /* BOTTOM MAP DRAWER / JOB CAROUSEL */
-                <View style={styles.bottomDrawerContainer}>
+                <View style={[styles.bottomDrawerContainer, { paddingBottom: insets.bottom }]}>
                     {visibleJobs.length > 0 && isOnline ? (
                         <View style={styles.bottomDrawerWrapper}>
                             <View style={styles.bottomDrawerHeaderRow}>

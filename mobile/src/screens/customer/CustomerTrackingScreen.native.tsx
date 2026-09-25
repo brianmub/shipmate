@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, StatusBar, Platform, Linking, Alert, Image, Modal, TextInput, BackHandler, AppState, AppStateStatus } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, StatusBar, Platform, Linking, Alert, Image, Modal, TextInput, BackHandler, AppState, AppStateStatus, Animated, Dimensions } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, Circle } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { supabase } from '../../utils/supabase';
 import { OfferSelectionPanel } from '../../components/OfferSelectionPanel';
 import { CustomerRatingModal } from '../../components/CustomerRatingModal';
@@ -28,6 +30,7 @@ export const ACTIVE_TRIP_STATUSES = [
 ];
 
 export const CustomerTrackingScreen = ({ route, navigation }: any) => {
+    const insets = useSafeAreaInsets();
     const { orderId } = route.params;
     const { user } = useAuthStore();
     const [order, setOrder] = useState<any>(null);
@@ -35,6 +38,34 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
     const [inAppCallVisible, setInAppCallVisible] = useState(false);
     const [isIncomingCall, setIsIncomingCall] = useState(false);
     const [inAppChatVisible, setInAppChatVisible] = useState(false);
+
+    // Draggable BottomSheet Snap Points & Animated Pulsing State
+    const snapPoints = useMemo(() => ['12%', '45%', '85%'], []);
+    const bottomSheetRef = useRef<BottomSheet>(null);
+    const [sheetIndex, setSheetIndex] = useState(0);
+    const pulseAnim = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        const isSearchingState = !order || order.status === 'pending' || order.status === 'searching';
+        if (isSearchingState) {
+            const animation = Animated.loop(
+                Animated.sequence([
+                    Animated.timing(pulseAnim, {
+                        toValue: 1.6,
+                        duration: 800,
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(pulseAnim, {
+                        toValue: 1,
+                        duration: 800,
+                        useNativeDriver: true,
+                    }),
+                ])
+            );
+            animation.start();
+            return () => animation.stop();
+        }
+    }, [order?.status]);
 
     // Watch for deep-linked / in-app banner incoming call triggers
     useEffect(() => {
@@ -581,7 +612,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
             if (!targetChannel) return;
             const state = targetChannel.presenceState();
             const viewers: any[] = [];
-            Object.values(state).forEach((presences: any[]) => {
+            (Object.values(state) as any[]).forEach((presences: any[]) => {
                 presences.forEach((presence: any) => {
                     viewers.push({
                         id: presence.mate_id || presence.presence_ref,
@@ -800,6 +831,40 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
 
     const isDelivery = order.service_type === 'delivery';
     const driverName = order.driver?.full_name || 'Assigning...';
+    const isSearching = order && (order.status === 'pending' || order.status === 'searching');
+
+    const collapsedStatusText = useMemo(() => {
+        if (!order) return 'Loading...';
+        if (isSearching) {
+            const mateCount = nearbyDrivers.length;
+            if (mateCount > 0) {
+                return `Searching · ${mateCount} ${mateCount === 1 ? 'Mate' : 'Mates'} active`;
+            }
+            if (viewingCouriers.length > 0) {
+                return `Searching · ${viewingCouriers.length} ${viewingCouriers.length === 1 ? 'Mate' : 'Mates'} reviewing`;
+            }
+            return 'Searching · Scanning zone';
+        }
+        if (order.status === 'driver_assigned') {
+            return `${driverName} assigned`;
+        }
+        if (order.status === 'en_route_to_pickup') {
+            return `${driverName} en route to pickup`;
+        }
+        if (order.status === 'arrived_at_pickup') {
+            return `${driverName} arrived at pickup`;
+        }
+        if (order.status === 'picked_up' || order.status === 'en_route_to_delivery') {
+            return `${driverName} delivering package`;
+        }
+        if (order.status === 'arrived_at_delivery') {
+            return `${driverName} outside at gate`;
+        }
+        if (order.status === 'delivered' || order.status === 'completed') {
+            return 'Delivery Completed';
+        }
+        return getStatusLabel(order.status);
+    }, [order, isSearching, nearbyDrivers.length, viewingCouriers.length, driverName]);
 
     return (
         <View style={styles.container}>
@@ -930,55 +995,216 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                 </BlurView>
             </View>
 
-            <View style={styles.bottomOverlay}>
-                <BlurView intensity={50} tint="light" style={styles.jobDetailsPanel}>
-                    <SafeAreaView edges={['bottom']}>
-                        <View style={styles.dragHandle} />
-
-                        <View style={styles.titleRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(5, 95, 238, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
-                                <Text style={styles.serviceIcon}>{isDelivery ? '📦' : '🛒'}</Text>
+            {/* DRAGGABLE RIDE-HAILING BOTTOM SHEET */}
+            <BottomSheet
+                ref={bottomSheetRef}
+                index={0}
+                snapPoints={snapPoints}
+                onChange={(idx) => setSheetIndex(idx)}
+                enablePanDownToClose={false}
+                handleIndicatorStyle={styles.bottomSheetIndicator}
+                backgroundStyle={styles.bottomSheetBackground}
+            >
+                <BottomSheetScrollView 
+                    contentContainerStyle={[styles.bottomSheetScrollContent, { paddingBottom: Math.max(insets.bottom + 20, 24) }]}
+                    showsVerticalScrollIndicator={false}
+                >
+                    {/* 1. COLLAPSED BAR (12% snap point - always visible, tap/swipe to toggle) */}
+                    <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => {
+                            const next = sheetIndex === 0 ? 1 : sheetIndex === 1 ? 2 : 0;
+                            bottomSheetRef.current?.snapToIndex(next);
+                        }}
+                        style={styles.collapsedHeaderBar}
+                    >
+                        <View style={styles.collapsedStatusRow}>
+                            <View style={styles.pulseContainer}>
+                                {isSearching ? (
+                                    <>
+                                        <Animated.View style={[styles.pulseCircle, { transform: [{ scale: pulseAnim }] }]} />
+                                        <View style={[styles.statusDot, styles.statusDotSearching]} />
+                                    </>
+                                ) : (
+                                    <View style={[styles.statusDot, styles.statusDotActive]} />
+                                )}
                             </View>
-                            <View>
-                                <Text style={styles.jobType}>{isDelivery ? 'Package Delivery' : 'Errand'}</Text>
-                                <Text style={[styles.statusText, { color: (order.status === 'completed' || order.status === 'delivered') ? '#22C55E' : '#055FEE' }]}>
-                                    {getStatusLabel(order.status)}
+                            <View style={styles.collapsedStatusTextCol}>
+                                <Text style={styles.collapsedStatusTitle} numberOfLines={1}>
+                                    {collapsedStatusText}
+                                </Text>
+                                <Text style={styles.collapsedStatusSubtitle} numberOfLines={1}>
+                                    {isSearching
+                                        ? `${searchRadiusKm} km radar · Tap to view details`
+                                        : `${isDelivery ? 'Package Delivery' : 'Errand'} · Tap to expand`}
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={styles.collapsedPriceBadge}>
+                            <Text style={styles.collapsedPriceValue}>
+                                ${parseFloat(order.estimated_cost || 0).toFixed(2)}
+                            </Text>
+                            <Text style={styles.collapsedPriceCurrency}>USD</Text>
+                        </View>
+                    </TouchableOpacity>
+
+                    {/* 2. MID-STATE CONTENT (45% snap point): SCANNABLE ROWS */}
+                    <View style={styles.midContentContainer}>
+                        {/* Scannable Row 1: Payment Method */}
+                        <View style={styles.scannableRow}>
+                            <View style={[styles.scannableIconWrapper, order.payment_method === 'cash_on_delivery' ? styles.codIconBg : styles.digitalIconBg]}>
+                                <Ionicons 
+                                    name={order.payment_method === 'cash_on_delivery' ? 'cash-outline' : 'card-outline'} 
+                                    size={18} 
+                                    color={order.payment_method === 'cash_on_delivery' ? '#B45309' : '#055FEE'} 
+                                />
+                            </View>
+                            <View style={styles.scannableTextCol}>
+                                <Text style={styles.scannableLabel}>Payment</Text>
+                                <Text style={styles.scannableValue}>
+                                    {order.payment_method === 'cash_on_delivery' 
+                                        ? `Cash on Delivery · $${parseFloat(order.estimated_cost || 0).toFixed(2)} USD` 
+                                        : `Paid Digitally (${order.payment_method?.toUpperCase() || 'Card'})`}
                                 </Text>
                             </View>
                         </View>
 
-                        {/* Customer Payment Status Directive Card */}
-                        <View style={[
-                            styles.trackingPaymentCard, 
-                            order.payment_method === 'cash_on_delivery' ? styles.trackingPaymentCardCod : styles.trackingPaymentCardDigital
-                        ]}>
-                            <Text style={styles.trackingPaymentIcon}>
-                                {order.payment_method === 'cash_on_delivery' ? '💵' : '✅'}
-                            </Text>
-                            <View style={styles.trackingPaymentTextWrap}>
-                                <View style={styles.trackingPaymentHeaderRow}>
-                                    <Text style={[
-                                        styles.trackingPaymentTitle, 
-                                        order.payment_method === 'cash_on_delivery' ? styles.trackingPaymentTitleCod : styles.trackingPaymentTitleDigital
-                                    ]}>
-                                        {order.payment_method === 'cash_on_delivery' ? 'Cash on Delivery' : 'Paid Digitally'}
-                                    </Text>
-                                    <Text style={[
-                                        styles.trackingPaymentAmount,
-                                        order.payment_method === 'cash_on_delivery' ? styles.trackingPaymentAmountCod : styles.trackingPaymentAmountDigital
-                                    ]}>
-                                        ${parseFloat(order.estimated_cost || 0).toFixed(2)} USD
+                        {/* Scannable Row 2: Recipient Details */}
+                        {order.recipient_name && order.recipient_name !== 'Customer' && (
+                            <View style={styles.scannableRow}>
+                                <View style={styles.scannableIconWrapper}>
+                                    <Ionicons name="person-outline" size={18} color="#055FEE" />
+                                </View>
+                                <View style={styles.scannableTextCol}>
+                                    <Text style={styles.scannableLabel}>Recipient</Text>
+                                    <Text style={styles.scannableValue}>
+                                        {order.recipient_name} {order.sms_notifications_enabled ? '· 📲 SMS Active' : ''}
                                     </Text>
                                 </View>
-                                <Text style={styles.trackingPaymentDesc}>
-                                    {order.payment_method === 'cash_on_delivery'
-                                        ? `Please prepare $${parseFloat(order.estimated_cost || 0).toFixed(2)} USD physical cash for your Mate upon arrival.`
-                                        : `Payment recorded digitally via ${order.payment_method === 'ecocash' ? 'EcoCash' : order.payment_method === 'innbucks' ? 'InnBucks' : 'Card'}. No cash needed at your door.`}
-                                </Text>
                             </View>
-                        </View>
+                        )}
 
-                        {/* Persistent Handover Delivery PIN (OTP) Card */}
+                        {/* Scannable Row 3: Radar Search Progress (while searching) */}
+                        {isSearching && (
+                            <View style={styles.searchRadiusCard}>
+                                <View style={styles.scannableRowNoBorder}>
+                                    <View style={styles.scannableIconWrapper}>
+                                        <Ionicons name="radio-outline" size={18} color="#055FEE" />
+                                    </View>
+                                    <View style={styles.scannableTextCol}>
+                                        <Text style={styles.scannableLabel}>Radar Search</Text>
+                                        <Text style={styles.scannableValue}>
+                                            {searchRadiusKm} km zone · {viewingCouriers.length > 0 ? `${viewingCouriers.length} Mates viewing` : `${nearbyDrivers.length} Mates nearby`}
+                                        </Text>
+                                    </View>
+                                </View>
+                                <View style={styles.searchProgressBarTrack}>
+                                    <View 
+                                        style={[
+                                            styles.searchProgressBarFill, 
+                                            { 
+                                                width: `${Math.min(100, Math.round((searchElapsedSeconds / 60) * 100))}%`,
+                                                backgroundColor: searchPhase === 'wide' ? '#8B5CF6' : searchPhase === 'expanding' ? '#055FEE' : '#F59E0B'
+                                            }
+                                        ]} 
+                                    />
+                                </View>
+                            </View>
+                        )}
+
+                        {/* Driver Quick Card (when assigned) */}
+                        {order.driver_id && order.status !== 'pending' && (
+                            <View style={styles.driverQuickCard}>
+                                <View style={styles.driverAvatar}>
+                                    <Text style={styles.driverAvatarText}>{driverName.charAt(0).toUpperCase()}</Text>
+                                </View>
+                                <View style={styles.driverDetails}>
+                                    <Text style={styles.driverNameLabel}>Assigned Mate</Text>
+                                    <Text style={styles.driverName}>{driverName}</Text>
+                                </View>
+                                <View style={styles.communicationButtons}>
+                                    <TouchableOpacity 
+                                        style={styles.contactBtn}
+                                        onPress={() => setInAppCallVisible(true)}
+                                    >
+                                        <Ionicons name="call" size={20} color="#FFFFFF" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={[styles.contactBtn, styles.chatBtn]}
+                                        onPress={() => {
+                                            setUnreadChatCount(0);
+                                            setInAppChatVisible(true);
+                                        }}
+                                    >
+                                        <Ionicons name="chatbubble-ellipses" size={20} color="#FFFFFF" />
+                                        {unreadChatCount > 0 && (
+                                            <View style={styles.unreadBadge}>
+                                                <Text style={styles.unreadBadgeText}>
+                                                    {unreadChatCount > 9 ? '9+' : unreadChatCount}
+                                                </Text>
+                                            </View>
+                                        )}
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        )}
+
+                        {/* Incoming Bids / Offers Panel */}
+                        {order.status === 'pending' && (
+                            <OfferSelectionPanel 
+                                offers={combinedOffers}
+                                onAccept={handleAcceptOffer}
+                                onSelect={(offer) => {
+                                    if (offer.driver_latitude && offer.driver_longitude && mapRef.current) {
+                                        mapRef.current.animateToRegion({
+                                            latitude: offer.driver_latitude,
+                                            longitude: offer.driver_longitude,
+                                            latitudeDelta: 0.02,
+                                            longitudeDelta: 0.02,
+                                        }, 1000);
+                                    }
+                                }}
+                                loading={offersLoading}
+                            />
+                        )}
+                    </View>
+
+                    {/* 3. EXPANDED CONTENT (85% snap point): SURGE BOOST, PIN, PROOF, CANCEL */}
+                    <View style={styles.expandedContentContainer}>
+                        {/* Surge Tip Boost Chips (when searching) */}
+                        {isSearching && (
+                            <View style={styles.surgeBoostCard}>
+                                <View style={styles.surgeBoostHeader}>
+                                    <Text style={styles.surgeBoostTitle}>⚡ Surge Tip (Fast Priority Dispatch)</Text>
+                                    <Text style={styles.surgeBoostSubtitle}>Tip your Mate to prioritize your order:</Text>
+                                </View>
+                                <View style={styles.boostChipsRow}>
+                                    <TouchableOpacity 
+                                        style={styles.boostChip} 
+                                        onPress={() => handleBoostOffer(0.50)}
+                                        disabled={boostingOffer}
+                                    >
+                                        <Text style={styles.boostChipText}>+$0.50</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={styles.boostChip} 
+                                        onPress={() => handleBoostOffer(1.00)}
+                                        disabled={boostingOffer}
+                                    >
+                                        <Text style={styles.boostChipText}>+$1.00</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={styles.boostChip} 
+                                        onPress={() => handleBoostOffer(2.00)}
+                                        disabled={boostingOffer}
+                                    >
+                                        <Text style={styles.boostChipText}>+$2.00</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        )}
+
+                        {/* Handover Delivery PIN (OTP) */}
                         {Boolean(order.handover_pin) && order.status !== 'cancelled' && (
                             <View style={[
                                 styles.handoverPinCard,
@@ -1038,7 +1264,6 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                     ))}
                                 </View>
 
-                                {/* Helper & Anti-Abuse Copy */}
                                 <Text style={styles.handoverPinHelperText}>
                                     {order.pin_locked 
                                         ? 'PIN entry locked after 3 failed attempts. Your courier will complete delivery via Photo Proof-of-Delivery.' 
@@ -1049,7 +1274,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                             </View>
                         )}
 
-                        {/* Milestone Arrival Banner: Mate at Pickup */}
+                        {/* Milestone Arrival Banners */}
                         {order.status === 'arrived_at_pickup' && (
                             <View style={styles.gateArrivalBanner}>
                                 <View style={styles.gateArrivalTopRow}>
@@ -1064,7 +1289,6 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                             </View>
                         )}
 
-                        {/* Milestone Arrival Banner: Mate is at the Gate + 5-Minute Waiting Countdown Timer */}
                         {(order.status === 'arrived_at_delivery' || order.status === 'arrived' || order.arrival_timer_started_at) && (
                             <View style={styles.gateArrivalBanner}>
                                 <View style={styles.gateArrivalTopRow}>
@@ -1139,210 +1363,8 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                             </View>
                         )}
 
-                        {/* Recipient & SMS Indicator */}
-                        {order.recipient_name && order.recipient_name !== 'Customer' && (
-                            <View style={styles.recipientInfoPill}>
-                                <Text style={styles.recipientPillIcon}>👤</Text>
-                                <Text style={styles.recipientPillText}>
-                                    Recipient: <Text style={{ fontWeight: '700', color: '#0F172A' }}>{order.recipient_name}</Text>
-                                    {order.sms_notifications_enabled ? ' • 📲 SMS & WhatsApp Active' : ''}
-                                </Text>
-                            </View>
-                        )}
-
-                        {order.status === 'pending' ? (
-                            <View>
-                                {order.released_count > 0 ? (
-                                    <View style={styles.reopenJobCard}>
-                                        <View style={styles.reopenBadgeWrap}>
-                                            <Text style={styles.reopenBadgeIcon}>⚡</Text>
-                                            <Text style={styles.reopenBadgeText}>PRIORITY RE-DISPATCH ACTIVE</Text>
-                                        </View>
-                                        <Text style={styles.reopenTitle}>Re-opening your job for bids</Text>
-                                        <Text style={styles.reopenDesc}>
-                                            Your previous Mate had an issue ({order.last_released_reason ? order.last_released_reason.replace(/_/g, ' ') : 'courier release'}) and released this delivery. We've prioritized your order at the top of the job queue for nearby Mates to bid immediately.
-                                        </Text>
-                                    </View>
-                                ) : searchPhase === 'timeout' && combinedOffers.length === 0 ? (
-                                    <View style={styles.timeoutCard}>
-                                            <View style={styles.timeoutHeader}>
-                                                <Text style={styles.timeoutIcon}>⏳</Text>
-                                                <View style={{ flex: 1 }}>
-                                                    <Text style={styles.timeoutTitle}>No Mates Available Nearby Right Now</Text>
-                                                    <Text style={styles.timeoutSubtitle}>
-                                                        Active couriers in this zone are currently on trips or completing deliveries.
-                                                    </Text>
-                                                </View>
-                                            </View>
-
-                                            {/* Offer Boost Action Chips */}
-                                            <Text style={styles.boostLabel}>⚡ Tip your Mate to prioritize your order:</Text>
-                                            <View style={styles.boostChipsRow}>
-                                                <TouchableOpacity 
-                                                    style={styles.boostChip} 
-                                                    onPress={() => handleBoostOffer(0.50)}
-                                                    disabled={boostingOffer}
-                                                >
-                                                    <Text style={styles.boostChipText}>+$0.50</Text>
-                                                </TouchableOpacity>
-                                                <TouchableOpacity 
-                                                    style={styles.boostChip} 
-                                                    onPress={() => handleBoostOffer(1.00)}
-                                                    disabled={boostingOffer}
-                                                >
-                                                    <Text style={styles.boostChipText}>+$1.00</Text>
-                                                </TouchableOpacity>
-                                                <TouchableOpacity 
-                                                    style={styles.boostChip} 
-                                                    onPress={() => handleBoostOffer(2.00)}
-                                                    disabled={boostingOffer}
-                                                >
-                                                    <Text style={styles.boostChipText}>+$2.00</Text>
-                                                </TouchableOpacity>
-                                            </View>
-
-                                            <View style={styles.timeoutActionsRow}>
-                                                <TouchableOpacity 
-                                                    style={styles.timeoutRetryBtn} 
-                                                    onPress={handleRetrySearch}
-                                                >
-                                                    <Text style={styles.timeoutRetryText}>🔄 Keep Searching (25 km)</Text>
-                                                </TouchableOpacity>
-                                                <TouchableOpacity 
-                                                    style={styles.timeoutCancelBtn} 
-                                                    onPress={() => setCancelModalVisible(true)}
-                                                >
-                                                    <Text style={styles.timeoutCancelText}>Cancel Free</Text>
-                                                </TouchableOpacity>
-                                            </View>
-                                        </View>
-                                    ) : (
-                                        <View style={styles.viewersCard}>
-                                            <View style={styles.viewersHeader}>
-                                                <ActivityIndicator 
-                                                    size="small" 
-                                                    color={searchPhase === 'expanding' ? '#055FEE' : searchPhase === 'wide' ? '#8B5CF6' : '#F59E0B'} 
-                                                    style={{ marginRight: 8 }} 
-                                                />
-                                                <Text style={styles.viewersTitle}>
-                                                    {searchPhase === 'expanding'
-                                                        ? 'No Mates nearby yet, expanding search…'
-                                                        : searchPhase === 'wide'
-                                                        ? 'High demand in your zone — searching wider area…'
-                                                        : 'Finding your Mate...'}
-                                                </Text>
-                                            </View>
-                                            <Text style={styles.viewersSubtitle}>
-                                                {searchPhase === 'expanding'
-                                                    ? `Expanding search to 10 km • Broadcasting to ${nearbyDrivers.length > 0 ? nearbyDrivers.length : 'active'} Mates in area`
-                                                    : searchPhase === 'wide'
-                                                    ? `Broadcasting across 20 km zone • ${nearbyDrivers.length > 0 ? `${nearbyDrivers.length} Mates active` : 'Searching regional fleet'}`
-                                                    : `Searching within 5 km zone • ${nearbyDrivers.length > 0 ? `${nearbyDrivers.length} Mates active nearby` : 'Connecting to closest couriers'}`}
-                                            </Text>
-
-                                            {/* Dynamic Search Progress Track */}
-                                            <View style={styles.searchProgressBarTrack}>
-                                                <View style={[
-                                                    styles.searchProgressBarFill, 
-                                                    { 
-                                                        width: `${Math.min(100, Math.round((searchElapsedSeconds / 60) * 100))}%`,
-                                                        backgroundColor: searchPhase === 'wide' ? '#8B5CF6' : searchPhase === 'expanding' ? '#055FEE' : '#F59E0B'
-                                                    }
-                                                ]} />
-                                            </View>
-
-                                            {/* Live Presence: Mates viewing this request */}
-                                            <View style={styles.presenceRow}>
-                                                <View style={styles.presenceIndicator}>
-                                                    <View style={[
-                                                        styles.presenceDot,
-                                                        { backgroundColor: viewingCouriers.length > 0 ? '#10B981' : '#6B7280' }
-                                                    ]} />
-                                                    <Text style={styles.presenceText}>
-                                                        {viewingCouriers.length === 0
-                                                            ? 'Broadcasting to nearby Mates...'
-                                                            : viewingCouriers.length === 1
-                                                            ? '1 Mate viewing your request'
-                                                            : `${viewingCouriers.length} Mates viewing your request`}
-                                                    </Text>
-                                                </View>
-                                                {viewingCouriers.length > 0 && (
-                                                    <View style={styles.avatarStack}>
-                                                        {viewingCouriers.slice(0, 3).map((viewer, idx) => (
-                                                            <View
-                                                                key={viewer.id || idx}
-                                                                style={[
-                                                                    styles.avatarCircle,
-                                                                    { marginLeft: idx === 0 ? 0 : -10, zIndex: 3 - idx }
-                                                                ]}
-                                                            >
-                                                                {viewer.avatar_url ? (
-                                                                    <Image
-                                                                        source={{ uri: viewer.avatar_url }}
-                                                                        style={styles.avatarImage}
-                                                                    />
-                                                                ) : (
-                                                                    <Text style={styles.avatarInitial}>
-                                                                        {(viewer.full_name || 'C').charAt(0).toUpperCase()}
-                                                                    </Text>
-                                                                )}
-                                                            </View>
-                                                        ))}
-                                                        {viewingCouriers.length > 3 && (
-                                                            <View style={[styles.avatarCircle, styles.avatarOverflow, { marginLeft: -10 }]}>
-                                                                <Text style={styles.avatarOverflowText}>
-                                                                    +{viewingCouriers.length - 3}
-                                                                </Text>
-                                                            </View>
-                                                        )}
-                                                    </View>
-                                                )}
-                                            </View>
-
-                                            {/* In-Flight Tip Suggestion if taking longer */}
-                                            {searchElapsedSeconds >= 20 && (
-                                                <View style={styles.quickTipBanner}>
-                                                    <Text style={styles.quickTipText}>
-                                                        💡 Tip: Tap <Text style={{ fontWeight: '700' }}>+$1.00</Text> to attract Mates faster during peak hours:
-                                                    </Text>
-                                                    <View style={styles.quickTipChips}>
-                                                        <TouchableOpacity 
-                                                            style={styles.quickTipBtn} 
-                                                            onPress={() => handleBoostOffer(1.00)}
-                                                            disabled={boostingOffer}
-                                                        >
-                                                            <Text style={styles.quickTipBtnText}>+$1.00 Boost</Text>
-                                                        </TouchableOpacity>
-                                                        <TouchableOpacity 
-                                                            style={styles.quickTipBtn} 
-                                                            onPress={() => handleBoostOffer(2.00)}
-                                                            disabled={boostingOffer}
-                                                        >
-                                                            <Text style={styles.quickTipBtnText}>+$2.00</Text>
-                                                        </TouchableOpacity>
-                                                    </View>
-                                                </View>
-                                            )}
-                                        </View>
-                                    )}
-
-                                <OfferSelectionPanel 
-                                    offers={combinedOffers}
-                                    onAccept={handleAcceptOffer}
-                                    onSelect={(offer) => {
-                                        if (offer.driver_latitude && offer.driver_longitude && mapRef.current) {
-                                            mapRef.current.animateToRegion({
-                                                latitude: offer.driver_latitude,
-                                                longitude: offer.driver_longitude,
-                                                latitudeDelta: 0.02,
-                                                longitudeDelta: 0.02,
-                                            }, 1000);
-                                        }
-                                    }}
-                                    loading={offersLoading}
-                                />
-                            </View>
-                        ) : (order.status === 'delivered' || order.status === 'completed') ? (
+                        {/* Delivery Completed / Proof Acknowledgement */}
+                        {(order.status === 'delivered' || order.status === 'completed') && (
                             <View style={styles.acknowledgementContainer}>
                                 <Text style={styles.acknowledgementHeader}>
                                     {order.status === 'completed' ? 'Delivery Confirmed! 🎉' : 'Package Delivered! 📦'}
@@ -1423,40 +1445,6 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                     </TouchableOpacity>
                                 )}
                             </View>
-                        ) : (
-                            <View style={styles.driverInfoCard}>
-                                <View style={styles.driverAvatar}>
-                                    <Text style={styles.driverAvatarText}>{driverName.charAt(0).toUpperCase()}</Text>
-                                </View>
-                                <View style={styles.driverDetails}>
-                                    <Text style={styles.driverNameLabel}>Your Mate</Text>
-                                    <Text style={styles.driverName}>{driverName}</Text>
-                                </View>
-                                <View style={styles.communicationButtons}>
-                                    <TouchableOpacity 
-                                        style={styles.contactBtn}
-                                        onPress={() => setInAppCallVisible(true)}
-                                    >
-                                        <Text style={styles.contactIcon}>📞</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity 
-                                        style={[styles.contactBtn, styles.chatBtn]}
-                                        onPress={() => {
-                                            setUnreadChatCount(0);
-                                            setInAppChatVisible(true);
-                                        }}
-                                    >
-                                        <Text style={styles.contactIcon}>💬</Text>
-                                        {unreadChatCount > 0 && (
-                                            <View style={styles.unreadBadge}>
-                                                <Text style={styles.unreadBadgeText}>
-                                                    {unreadChatCount > 9 ? '9+' : unreadChatCount}
-                                                </Text>
-                                            </View>
-                                        )}
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
                         )}
 
                         {/* Cancel Order Action Button */}
@@ -1469,9 +1457,9 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                 <Text style={styles.cancelOrderTriggerText}>Cancel Order</Text>
                             </TouchableOpacity>
                         )}
-                    </SafeAreaView>
-                </BlurView>
-            </View>
+                    </View>
+                </BottomSheetScrollView>
+            </BottomSheet>
 
             <CustomerRatingModal
                 visible={showRatingModal}
@@ -1689,6 +1677,195 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 4,
         elevation: 4,
+    },
+
+    // Bottom Sheet Styling (Uber / Bolt / inDrive UX)
+    bottomSheetBackground: {
+        backgroundColor: '#FFFFFF',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+        elevation: 16,
+    },
+    bottomSheetIndicator: {
+        width: 36,
+        height: 4,
+        backgroundColor: '#CBD5E1',
+        borderRadius: 2,
+    },
+    bottomSheetScrollContent: {
+        paddingHorizontal: 20,
+        paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+    },
+
+    // 12% Collapsed Bar
+    collapsedHeaderBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F1F5F9',
+    },
+    collapsedStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        marginRight: 12,
+    },
+    pulseContainer: {
+        width: 20,
+        height: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    pulseCircle: {
+        position: 'absolute',
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: 'rgba(5, 95, 238, 0.25)',
+    },
+    statusDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+    },
+    statusDotSearching: {
+        backgroundColor: '#055FEE',
+    },
+    statusDotActive: {
+        backgroundColor: '#10B981',
+    },
+    collapsedStatusTextCol: {
+        flex: 1,
+    },
+    collapsedStatusTitle: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#0F172A',
+        letterSpacing: -0.2,
+    },
+    collapsedStatusSubtitle: {
+        fontSize: 12,
+        fontWeight: '500',
+        color: '#64748B',
+        marginTop: 1,
+    },
+    collapsedPriceBadge: {
+        alignItems: 'flex-end',
+        backgroundColor: '#F8FAFC',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    collapsedPriceValue: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    collapsedPriceCurrency: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: '#64748B',
+    },
+
+    // 45% Mid-State Content
+    midContentContainer: {
+        marginTop: 14,
+    },
+    scannableRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F1F5F9',
+    },
+    scannableRowNoBorder: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    scannableIconWrapper: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: '#EFF6FF',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 12,
+    },
+    codIconBg: {
+        backgroundColor: '#FEF3C7',
+    },
+    digitalIconBg: {
+        backgroundColor: '#ECFDF5',
+    },
+    scannableTextCol: {
+        flex: 1,
+    },
+    scannableLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#64748B',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    scannableValue: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#1E293B',
+        marginTop: 2,
+    },
+    searchRadiusCard: {
+        backgroundColor: '#F8FAFC',
+        borderRadius: 14,
+        padding: 12,
+        marginVertical: 8,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    driverQuickCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F8FAFC',
+        padding: 14,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        marginVertical: 10,
+    },
+
+    // 85% Expanded Content
+    expandedContentContainer: {
+        marginTop: 8,
+    },
+    surgeBoostCard: {
+        backgroundColor: '#F8FAFC',
+        borderRadius: 14,
+        padding: 12,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    surgeBoostHeader: {
+        marginBottom: 8,
+    },
+    surgeBoostTitle: {
+        fontSize: 13,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    surgeBoostSubtitle: {
+        fontSize: 11,
+        fontWeight: '500',
+        color: '#64748B',
+        marginTop: 2,
     },
 
     bottomOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0 },

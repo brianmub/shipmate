@@ -15,7 +15,7 @@ import {
     Modal,
     Keyboard
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../store/authStore';
@@ -42,6 +42,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
         resetOrder
     } = useOrderStore();
     const { user } = useAuthStore();
+    const insets = useSafeAreaInsets();
 
     // Wizard Step: 1 = Route & Package, 2 = Recipient, 3 = Payment & Fare
     const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
@@ -633,7 +634,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
     return (
         <LinearGradient colors={['#F8FAFC', '#EFF6FF']} style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
-            <SafeAreaView style={styles.safeArea} edges={['bottom', 'left', 'right']}>
+            <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
                 <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
 
                     {/* Compact Top Header & Service Selector */}
@@ -746,7 +747,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
 
                     {/* Main Scrollable Step Form Body */}
                     <ScrollView 
-                        contentContainerStyle={styles.scrollContent} 
+                        contentContainerStyle={[styles.scrollContent, { paddingBottom: 110 + insets.bottom }]} 
                         showsVerticalScrollIndicator={false}
                         keyboardShouldPersistTaps="handled"
                     >
@@ -1370,7 +1371,7 @@ export const CreateOrderScreen = ({ route, navigation }: any) => {
                     {/* ========================================================================= */}
                     {/* STICKY BOTTOM ACTION BAR                                                  */}
                     {/* ========================================================================= */}
-                    <View style={styles.bottomBar}>
+                    <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom + 12, 16) }]}>
                         <View style={styles.bottomBarFarePreview}>
                             <Text style={styles.bottomFareLabel}>Total Fare</Text>
                             <Text style={styles.bottomFareValue}>${currentTotalPayable.toFixed(2)}</Text>
@@ -2243,7 +2244,7 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingHorizontal: 20,
         paddingTop: 12,
-        paddingBottom: Platform.OS === 'ios' ? 28 : 16,
+        paddingBottom: 16,
         borderTopWidth: 1,
         borderTopColor: '#E2E8F0',
         shadowColor: '#000',

@@ -147,7 +147,7 @@ export const InAppChatModal: React.FC<InAppChatModalProps> = ({
                         styles.messageText,
                         isMyMessage ? styles.myMessageText : styles.otherMessageText
                     ]}>
-                        {item.content}
+                        {item.content || item.message_text}
                     </Text>
                     <Text style={[
                         styles.timestampText,

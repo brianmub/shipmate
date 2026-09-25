@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, Alert, ScrollView, ActivityIndicator, Image } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import Signature from 'react-native-signature-canvas';
@@ -14,6 +15,7 @@ interface ProofOfDeliveryProps {
 }
 
 export const ProofOfDeliveryModal = ({ visible, onClose, onComplete, orderId }: ProofOfDeliveryProps) => {
+    const insets = useSafeAreaInsets();
     const [signature, setSignature] = useState<string | null>(null);
     const [photo, setPhoto] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
@@ -78,7 +80,7 @@ export const ProofOfDeliveryModal = ({ visible, onClose, onComplete, orderId }: 
     return (
         <Modal visible={visible} animationType="slide" transparent>
             <BlurView intensity={80} tint="dark" style={styles.container}>
-                <View style={styles.content}>
+                <View style={[styles.content, { paddingBottom: Math.max(insets.bottom + 16, 24) }]}>
                     <View style={styles.header}>
                         <Text style={styles.title}>Proof of Delivery</Text>
                         <TouchableOpacity onPress={onClose}>

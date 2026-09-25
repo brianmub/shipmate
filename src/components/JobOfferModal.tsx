@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, TextInput, ActivityIndicator, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
@@ -16,6 +17,7 @@ interface JobOfferModalProps {
 }
 
 export const JobOfferModal = ({ visible, onClose, order, onOfferSubmitted, presenceChannel }: JobOfferModalProps) => {
+    const insets = useSafeAreaInsets();
     const { user } = useAuthStore();
     const [amount, setAmount] = useState('');
     const [loading, setLoading] = useState(false);
@@ -138,12 +140,14 @@ export const JobOfferModal = ({ visible, onClose, order, onOfferSubmitted, prese
                     mate_id: mateId,
                     amount: offerAmount,
                 })
-                .then(({ error }: any) => {
-                    if (error) {
-                        console.warn('Bids table persistence note:', error.message);
-                    }
-                })
-                .catch((err: any) => console.warn('Bids insert error:', err));
+                .then(
+                    ({ error }: any) => {
+                        if (error) {
+                            console.warn('Bids table persistence note:', error.message);
+                        }
+                    },
+                    (err: any) => console.warn('Bids insert error:', err)
+                );
 
             // 3. Also invoke legacy orderService.submitOffer for orders compatibility
             try {
@@ -181,7 +185,7 @@ export const JobOfferModal = ({ visible, onClose, order, onOfferSubmitted, prese
                 style={styles.centeredView}
             >
                 <BlurView intensity={30} tint="dark" style={styles.blurContainer}>
-                    <View style={styles.modalView}>
+                    <View style={[styles.modalView, { paddingBottom: Math.max(insets.bottom + 20, 32) }]}>
                         <View style={styles.header}>
                             <Text style={styles.modalTitle}>Make an Offer</Text>
                             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>

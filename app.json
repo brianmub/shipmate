@@ -29,7 +29,7 @@
     },
     "android": {
       "package": "com.shipmate.shipmate",
-      "versionCode": 28,
+      "versionCode": 29,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",

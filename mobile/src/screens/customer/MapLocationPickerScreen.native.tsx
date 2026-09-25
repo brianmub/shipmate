@@ -11,7 +11,7 @@ import {
     Keyboard,
     Platform
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView, { Marker, Region } from 'react-native-maps';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
@@ -21,6 +21,7 @@ import { useAuthStore } from '../../store/authStore';
 import { locationSearchService, AddressSuggestion } from '../../services/locationSearchService';
 
 export const MapLocationPickerScreen = ({ route, navigation }: any) => {
+    const insets = useSafeAreaInsets();
     const { locationType, serviceType, initialAddress, initialCoordinate } = route.params || { 
         locationType: 'pickup', 
         serviceType: 'delivery' 
@@ -362,13 +363,13 @@ export const MapLocationPickerScreen = ({ route, navigation }: any) => {
     const mode = getModeMeta();
 
     return (
-        <SafeAreaView style={styles.container} edges={['bottom', 'left', 'right']}>
+        <SafeAreaView style={styles.container} edges={['left', 'right']}>
             <View style={styles.mapContainer}>
                 <MapView
                     ref={mapRef}
                     style={styles.map}
                     region={region}
-                    onRegionChangeComplete={(r) => {
+                    onRegionChangeComplete={(r: any) => {
                         // Keep track of region
                         setRegion(r);
                     }}
@@ -510,7 +511,7 @@ export const MapLocationPickerScreen = ({ route, navigation }: any) => {
             </View>
 
             {/* inDrive / Bolt Bottom Sheet Details & Confirmation */}
-            <View style={styles.footer}>
+            <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 12, 20) }]}>
                 <View style={styles.headerIndicator} />
 
                 {/* Mode Tag & Status */}
@@ -802,7 +803,7 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 28, 
         borderTopRightRadius: 28, 
         paddingHorizontal: 20,
-        paddingBottom: Platform.OS === 'ios' ? 28 : 20, 
+        paddingBottom: 20, 
         elevation: 20, 
         shadowColor: '#0F172A', 
         shadowOffset: { width: 0, height: -8 }, 

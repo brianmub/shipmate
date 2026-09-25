@@ -1,9 +1,11 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, StatusBar, Platform, Linking, Modal, TextInput, KeyboardAvoidingView } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, StatusBar, Platform, Linking, Modal, TextInput, KeyboardAvoidingView, Animated } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import * as Location from 'expo-location';
 import { orderService } from '../../services/orderService';
 import { chatService } from '../../services/chatService';
@@ -16,6 +18,7 @@ import { OrderStatus, OrderReleaseReason, MaskedCallLog } from '../../types';
 import { startCourierBackgroundLocation, stopCourierBackgroundLocation } from '../../utils/backgroundLocation';
 
 export const DriverActiveJobScreen = ({ navigation, route }: any) => {
+    const insets = useSafeAreaInsets();
     const { user } = useAuthStore();
     const [activeJob, setActiveJob] = useState<any>(null);
     const [loading, setLoading] = useState(true);
@@ -51,6 +54,56 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
     const [lastCallTimestamp, setLastCallTimestamp] = useState<number | null>(null);
     const [secondsUntilNextCallAllowed, setSecondsUntilNextCallAllowed] = useState<number>(0);
     const [proposedCompensation, setProposedCompensation] = useState<string>('0.50');
+
+    // Bottom Sheet Hooks & State (Matching Uber / Bolt / inDrive pattern)
+    const bottomSheetRef = useRef<BottomSheet>(null);
+    const snapPoints = useMemo(() => ['14%', '52%', '88%'], []);
+    const [sheetIndex, setSheetIndex] = useState(0);
+
+    // Looping Pulse Animation for Live Map Tracking Status
+    const pulseAnim = useRef(new Animated.Value(1)).current;
+    useEffect(() => {
+        const pulse = Animated.loop(
+            Animated.sequence([
+                Animated.timing(pulseAnim, {
+                    toValue: 1.6,
+                    duration: 1200,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(pulseAnim, {
+                    toValue: 1,
+                    duration: 1200,
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+        pulse.start();
+        return () => pulse.stop();
+    }, [pulseAnim]);
+
+    const getStatusDisplayInfo = (status: OrderStatus | string) => {
+        switch (status) {
+            case 'driver_assigned':
+            case 'accepted':
+                return { title: 'Order Accepted', subtitle: 'Heading to Pickup', color: '#055FEE' };
+            case 'en_route_to_pickup':
+                return { title: 'En Route to Pickup', subtitle: activeJob?.pickup_address || activeJob?.errand_location || 'Navigating to pickup', color: '#055FEE' };
+            case 'arrived_at_pickup':
+                return { title: 'Arrived at Pickup', subtitle: 'Awaiting package collection', color: '#F59E0B' };
+            case 'picked_up':
+            case 'in_delivery':
+            case 'en_route_to_delivery':
+                return { title: 'In Transit to Drop-off', subtitle: activeJob?.dropoff_address || 'Navigating to dropoff', color: '#055FEE' };
+            case 'arrived_at_delivery':
+            case 'arrived':
+                return { title: 'Arrived at Delivery', subtitle: 'Ready for handover PIN', color: '#10B981' };
+            case 'delivered':
+            case 'completed':
+                return { title: 'Delivery Completed', subtitle: 'Handover verified', color: '#10B981' };
+            default:
+                return { title: String(status || 'ACTIVE').replace(/_/g, ' ').toUpperCase(), subtitle: 'Active delivery', color: '#055FEE' };
+        }
+    };
 
     const fetchActiveJob = async () => {
         if (!user) return;
@@ -489,6 +542,7 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
     };
 
     const isDelivery = activeJob.service_type === 'delivery';
+    const statusInfo = getStatusDisplayInfo(activeJob.status);
 
     return (
         <View style={styles.container}>
@@ -542,24 +596,70 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                 </BlurView>
             </View>
 
-            <View style={styles.bottomOverlay}>
-                <BlurView intensity={50} tint="light" style={styles.jobDetailsPanel}>
-                    <SafeAreaView edges={['bottom']}>
-                        <View style={styles.dragHandle} />
-
-                        <View style={styles.titleRow}>
-                            <View style={[styles.iconContainer, { backgroundColor: isDelivery ? 'rgba(5, 95, 238, 0.1)' : 'rgba(66, 133, 244, 0.1)' }]}>
-                                <Text style={styles.serviceIcon}>{isDelivery ? '📦' : '🛒'}</Text>
+            {/* DRAGGABLE BOTTOM SHEET (Uber / Bolt / inDrive UX pattern) */}
+            <BottomSheet
+                ref={bottomSheetRef}
+                index={0}
+                snapPoints={snapPoints}
+                onChange={(idx) => setSheetIndex(idx)}
+                enablePanDownToClose={false}
+                handleIndicatorStyle={styles.bottomSheetIndicator}
+                backgroundStyle={styles.bottomSheetBackground}
+            >
+                <BottomSheetScrollView
+                    contentContainerStyle={[styles.bottomSheetScrollContent, { paddingBottom: Math.max(insets.bottom + 20, 24) }]}
+                    showsVerticalScrollIndicator={false}
+                >
+                    {/* 1. COLLAPSED BAR (14% snap point - always visible, tap/swipe to toggle) */}
+                    <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => {
+                            const next = sheetIndex === 0 ? 1 : sheetIndex === 1 ? 2 : 0;
+                            bottomSheetRef.current?.snapToIndex(next);
+                        }}
+                        style={styles.collapsedHeaderBar}
+                    >
+                        <View style={styles.collapsedStatusRow}>
+                            <View style={styles.pulseContainer}>
+                                <Animated.View 
+                                    style={[
+                                        styles.pulseCircle, 
+                                        { 
+                                            transform: [{ scale: pulseAnim }],
+                                            backgroundColor: (statusInfo.color === '#10B981' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(5, 95, 238, 0.25)')
+                                        }
+                                    ]} 
+                                />
+                                <View style={[styles.statusDot, { backgroundColor: statusInfo.color }]} />
                             </View>
-                            <Text style={styles.jobType}>Current {isDelivery ? 'Delivery' : 'Errand'}</Text>
+                            <View style={styles.collapsedStatusTextCol}>
+                                <Text style={styles.collapsedStatusTitle} numberOfLines={1}>
+                                    {statusInfo.title}
+                                </Text>
+                                <Text style={styles.collapsedStatusSubtitle} numberOfLines={1}>
+                                    {isDelivery ? '📦 Package Delivery' : '🛒 Errand'} · {statusInfo.subtitle}
+                                </Text>
+                            </View>
                         </View>
+                        <View style={styles.collapsedPriceBadge}>
+                            <Text style={styles.collapsedPriceValue}>
+                                ${parseFloat(activeJob.cash_to_collect || activeJob.estimated_cost || 0).toFixed(2)}
+                            </Text>
+                            <Text style={[styles.collapsedPriceCurrency, activeJob.payment_method === 'cash_on_delivery' ? styles.priceCodColor : styles.priceDigitalColor]}>
+                                {activeJob.payment_method === 'cash_on_delivery' ? 'CASH' : 'USD'}
+                            </Text>
+                        </View>
+                    </TouchableOpacity>
 
+                    {/* 2. MID-STATE CONTENT (52% snap point): ROUTE & QUICK ACTIONS */}
+                    <View style={styles.midContentContainer}>
+                        {/* Route Timeline */}
                         <View style={styles.locationContainer}>
                             <View style={styles.locationRow}>
                                 <View style={styles.timelineDot} />
                                 <View style={styles.locationInfoWrap}>
                                     <Text style={styles.locationText} numberOfLines={2}>
-                                        <Text style={styles.locationLabel}>From: </Text>
+                                        <Text style={styles.locationLabel}>Pickup: </Text>
                                         {activeJob.pickup_address || activeJob.errand_location || 'Pickup Location'}
                                     </Text>
                                 </View>
@@ -568,7 +668,8 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                     activeOpacity={0.7}
                                     onPress={() => openNativeNavigation(pickup_latitude, pickup_longitude, activeJob.pickup_address || activeJob.errand_location)}
                                 >
-                                    <Text style={styles.navChipText}>🧭 Nav</Text>
+                                    <Ionicons name="navigate-outline" size={14} color="#055FEE" style={{ marginRight: 3 }} />
+                                    <Text style={styles.navChipText}>Nav</Text>
                                 </TouchableOpacity>
                             </View>
                             <View style={styles.timelineLine} />
@@ -576,7 +677,7 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                 <View style={[styles.timelineDot, styles.timelineDotEnd]} />
                                 <View style={styles.locationInfoWrap}>
                                     <Text style={styles.locationText} numberOfLines={2}>
-                                        <Text style={styles.locationLabel}>To: </Text>
+                                        <Text style={styles.locationLabel}>Dropoff: </Text>
                                         {activeJob.dropoff_address || 'Dropoff Location'}
                                     </Text>
                                 </View>
@@ -585,14 +686,10 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                     activeOpacity={0.7}
                                     onPress={() => openNativeNavigation(dropoff_latitude, dropoff_longitude, activeJob.dropoff_address)}
                                 >
-                                    <Text style={styles.navChipText}>🧭 Nav</Text>
+                                    <Ionicons name="navigate-outline" size={14} color="#055FEE" style={{ marginRight: 3 }} />
+                                    <Text style={styles.navChipText}>Nav</Text>
                                 </TouchableOpacity>
                             </View>
-                        </View>
-
-                        <View style={styles.statusBadge}>
-                            <Text style={styles.statusLabel}>Current Status: </Text>
-                            <Text style={styles.statusValue}>{activeJob.status.replace(/_/g, ' ').toUpperCase()}</Text>
                         </View>
 
                         {/* Driver Payment Directive Banner */}
@@ -602,9 +699,11 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                 ? styles.driverDirectiveBannerCod 
                                 : styles.driverDirectiveBannerDigital
                         ]}>
-                            <Text style={styles.driverDirectiveIcon}>
-                                {activeJob.payment_method === 'cash_on_delivery' ? '💵' : '✅'}
-                            </Text>
+                            <Ionicons 
+                                name={activeJob.payment_method === 'cash_on_delivery' ? 'cash-outline' : 'card-outline'} 
+                                size={22} 
+                                color={activeJob.payment_method === 'cash_on_delivery' ? '#B45309' : '#055FEE'} 
+                            />
                             <View style={styles.driverDirectiveTextWrap}>
                                 <Text style={[
                                     styles.driverDirectiveTitle,
@@ -618,8 +717,8 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                 </Text>
                                 <Text style={styles.driverDirectiveSubtitle}>
                                     {activeJob.payment_method === 'cash_on_delivery'
-                                        ? 'Collect physical cash from customer upon delivery. Platform commission will be deducted from your float.'
-                                        : 'DO NOT collect cash from customer. Net earnings will be credited directly to your ShipMate Wallet.'}
+                                        ? 'Collect physical cash from customer upon delivery. Platform commission deducted from float.'
+                                        : 'DO NOT collect cash from customer. Net earnings will be credited directly to your Wallet.'}
                                 </Text>
                             </View>
                         </View>
@@ -640,7 +739,7 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                     style={styles.contactBtn}
                                     onPress={() => setInAppCallVisible(true)}
                                 >
-                                    <Text style={styles.contactIcon}>📞</Text>
+                                    <Ionicons name="call" size={20} color="#FFFFFF" />
                                 </TouchableOpacity>
                                 <TouchableOpacity 
                                     style={[styles.contactBtn, styles.chatBtn]}
@@ -653,7 +752,7 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                          });
                                     }}
                                 >
-                                    <Text style={styles.contactIcon}>💬</Text>
+                                    <Ionicons name="chatbubble-ellipses" size={20} color="#FFFFFF" />
                                     {unreadChatCount > 0 && (
                                         <View style={styles.unreadBadge}>
                                             <Text style={styles.unreadBadgeText}>
@@ -665,12 +764,36 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                             </View>
                         </View>
 
+                        {/* Primary Step Action Button */}
+                        <TouchableOpacity
+                            style={styles.completeButtonContainer}
+                            activeOpacity={0.8}
+                            onPress={handleNextStep}
+                            disabled={loading}
+                        >
+                            <LinearGradient
+                                colors={['#055FEE', '#5B99F2']}
+                                style={styles.completeGradient}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                            >
+                                {loading ? (
+                                    <ActivityIndicator color="#FFFFFF" />
+                                ) : (
+                                    <Text style={styles.completeButtonText}>{getButtonText(activeJob.status)}</Text>
+                                )}
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* 3. EXPANDED CONTENT (88% snap point): RECIPIENT, OTP, GATE PING, RELEASE */}
+                    <View style={styles.expandedContentContainer}>
                         {/* Recipient Drop-off Card (if specified) */}
                         {(activeJob.recipient_name || activeJob.recipient_phone || activeJob.recipient_notes) && (
                             <View style={styles.recipientJobCard}>
                                 <View style={styles.recipientJobHeader}>
                                     <View style={styles.recipientJobHeaderLeft}>
-                                        <Text style={styles.recipientJobHeaderIcon}>👤</Text>
+                                        <Ionicons name="person-circle-outline" size={20} color="#055FEE" />
                                         <Text style={styles.recipientJobHeaderTitle}>Drop-off Recipient</Text>
                                     </View>
                                     {activeJob.sms_notifications_enabled ? (
@@ -703,7 +826,7 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                             activeOpacity={0.7}
                                             onPress={() => setInAppCallVisible(true)}
                                         >
-                                            <Text style={styles.recipientCallBtnIcon}>📞</Text>
+                                            <Ionicons name="call" size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
                                             <Text style={styles.recipientCallBtnText}>Call In-App</Text>
                                         </TouchableOpacity>
                                     )}
@@ -712,6 +835,7 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                         activeOpacity={0.7}
                                         disabled={pingingGate}
                                         onPress={async () => {
+                                            if (!user) return;
                                             try {
                                                 setPingingGate(true);
                                                 const arrivalMsg = `Hi ${activeJob.recipient_name || 'there'}! I'm your ShipMate courier. I have arrived outside at your gate / door with your order.`;
@@ -725,7 +849,7 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                             }
                                         }}
                                     >
-                                        <Text style={styles.recipientSmsBtnIcon}>🔔</Text>
+                                        <Ionicons name="notifications" size={15} color="#FFFFFF" style={{ marginRight: 4 }} />
                                         <Text style={styles.recipientSmsBtnText}>{pingingGate ? 'Pinging...' : 'Ping Gate Arrival'}</Text>
                                     </TouchableOpacity>
                                 </View>
@@ -751,33 +875,13 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
                             >
-                                <Text style={styles.turnByTurnIcon}>🗺️</Text>
+                                <Ionicons name="map" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
                                 <Text style={styles.turnByTurnText}>
                                     {(activeJob.status === 'driver_assigned' || activeJob.status === 'en_route_to_pickup')
                                         ? 'Turn-by-Turn to Pickup'
                                         : 'Turn-by-Turn to Drop-off'}
                                 </Text>
-                                <Text style={styles.turnByTurnArrow}>↗</Text>
-                            </LinearGradient>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                            style={styles.completeButtonContainer}
-                            activeOpacity={0.8}
-                            onPress={handleNextStep}
-                            disabled={loading}
-                        >
-                            <LinearGradient
-                                colors={['#055FEE', '#5B99F2']}
-                                style={styles.completeGradient}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 0 }}
-                            >
-                                {loading ? (
-                                    <ActivityIndicator color="#FFFFFF" />
-                                ) : (
-                                    <Text style={styles.completeButtonText}>{getButtonText(activeJob.status)}</Text>
-                                )}
+                                <Ionicons name="arrow-up-circle-outline" size={20} color="#FFFFFF" style={{ marginLeft: 8 }} />
                             </LinearGradient>
                         </TouchableOpacity>
 
@@ -819,36 +923,36 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                         >
                             <Text style={styles.releaseOrderTriggerText}>Release Job (Issue / No-Show)</Text>
                         </TouchableOpacity>
+                    </View>
+                </BottomSheetScrollView>
+            </BottomSheet>
 
-                        <ProofOfDeliveryModal 
-                            visible={podVisible}
-                            onClose={() => setPodVisible(false)}
-                            onComplete={handlePodComplete}
-                            orderId={activeJob.id}
-                        />
+            <ProofOfDeliveryModal 
+                visible={podVisible}
+                onClose={() => setPodVisible(false)}
+                onComplete={handlePodComplete}
+                orderId={activeJob.id}
+            />
 
-                        {activeJob && user && (
-                            <InAppCallModal
-                                visible={inAppCallVisible}
-                                orderId={activeJob.id}
-                                callerId={user.id}
-                                callerRole="driver"
-                                targetName={activeJob.customer?.full_name || 'Customer'}
-                                targetRole="customer"
-                                isIncoming={isIncomingCall}
-                                onClose={() => {
-                                    setInAppCallVisible(false);
-                                    setIsIncomingCall(false);
-                                }}
-                                onCallCompleted={() => {
-                                    setLastCallTimestamp(Date.now());
-                                    fetchCallAttempts(activeJob.id);
-                                }}
-                            />
-                        )}
-                    </SafeAreaView>
-                </BlurView>
-            </View>
+            {activeJob && user && (
+                <InAppCallModal
+                    visible={inAppCallVisible}
+                    orderId={activeJob.id}
+                    callerId={user.id}
+                    callerRole="driver"
+                    targetName={activeJob.customer?.full_name || 'Customer'}
+                    targetRole="customer"
+                    isIncoming={isIncomingCall}
+                    onClose={() => {
+                        setInAppCallVisible(false);
+                        setIsIncomingCall(false);
+                    }}
+                    onCallCompleted={() => {
+                        setLastCallTimestamp(Date.now());
+                        fetchCallAttempts(activeJob.id);
+                    }}
+                />
+            )}
 
             {/* Handover PIN (OTP) Confirmation Modal */}
             <Modal
@@ -1200,35 +1304,111 @@ const styles = StyleSheet.create({
         fontWeight: '800',
         color: '#0F172A',
     },
-    bottomOverlay: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
+    // Bottom Sheet Styling (Uber / Bolt / inDrive UX)
+    bottomSheetBackground: {
+        backgroundColor: '#FFFFFF',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+        elevation: 16,
     },
-    jobDetailsPanel: {
-        paddingHorizontal: 24,
-        paddingTop: 12,
-        paddingBottom: 20,
-        borderTopLeftRadius: 32,
-        borderTopRightRadius: 32,
-        borderWidth: 1,
-        borderBottomWidth: 0,
-        borderColor: 'rgba(255,255,255,0.8)',
-        overflow: 'hidden',
+    bottomSheetIndicator: {
+        width: 36,
+        height: 4,
+        backgroundColor: '#CBD5E1',
+        borderRadius: 2,
     },
-    dragHandle: {
-        width: 48,
-        height: 5,
-        backgroundColor: 'rgba(0,0,0,0.1)',
-        borderRadius: 3,
-        alignSelf: 'center',
-        marginBottom: 24,
+    bottomSheetScrollContent: {
+        paddingHorizontal: 20,
+        paddingBottom: Platform.OS === 'ios' ? 40 : 24,
     },
-    titleRow: {
+
+    // 14% Collapsed Bar
+    collapsedHeaderBar: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 20,
+        justifyContent: 'space-between',
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F1F5F9',
+    },
+    collapsedStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        marginRight: 12,
+    },
+    pulseContainer: {
+        width: 20,
+        height: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 10,
+    },
+    pulseCircle: {
+        position: 'absolute',
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: 'rgba(5, 95, 238, 0.25)',
+    },
+    statusDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#055FEE',
+    },
+    collapsedStatusTextCol: {
+        flex: 1,
+    },
+    collapsedStatusTitle: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#0F172A',
+        letterSpacing: -0.2,
+    },
+    collapsedStatusSubtitle: {
+        fontSize: 12,
+        fontWeight: '500',
+        color: '#64748B',
+        marginTop: 1,
+    },
+    collapsedPriceBadge: {
+        alignItems: 'flex-end',
+        backgroundColor: '#F8FAFC',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    collapsedPriceValue: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    collapsedPriceCurrency: {
+        fontSize: 10,
+        fontWeight: '700',
+    },
+    priceCodColor: {
+        color: '#B45309',
+    },
+    priceDigitalColor: {
+        color: '#065F46',
+    },
+
+    // 52% Mid-State Content
+    midContentContainer: {
+        marginTop: 12,
+    },
+
+    // 88% Expanded Content
+    expandedContentContainer: {
+        marginTop: 8,
     },
     iconContainer: {
         width: 44,

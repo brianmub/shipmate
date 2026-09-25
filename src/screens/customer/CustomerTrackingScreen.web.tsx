@@ -532,7 +532,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
             if (!targetChannel) return;
             const state = targetChannel.presenceState();
             const viewers: any[] = [];
-            Object.values(state).forEach((presences: any[]) => {
+            (Object.values(state) as any[]).forEach((presences: any[]) => {
                 presences.forEach((presence: any) => {
                     viewers.push({
                         id: presence.mate_id || presence.presence_ref,
@@ -1091,6 +1091,7 @@ export const CustomerTrackingScreen = ({ route, navigation }: any) => {
                                     <OfferSelectionPanel 
                                         offers={combinedOffers}
                                         onAccept={handleAcceptOffer}
+                                        onSelect={() => {}}
                                         loading={offersLoading}
                                     />
                                 </View>

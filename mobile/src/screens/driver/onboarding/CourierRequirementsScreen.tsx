@@ -1,11 +1,12 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, StatusBar, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 
 export const CourierRequirementsScreen = ({ navigation }: any) => {
+    const insets = useSafeAreaInsets();
     const requirements = [
         {
             icon: 'card-outline',
@@ -45,9 +46,9 @@ export const CourierRequirementsScreen = ({ navigation }: any) => {
             end={{ x: 1, y: 1 }}
         >
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-            <SafeAreaView style={styles.safeArea}>
+            <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
                 <ScrollView 
-                    contentContainerStyle={styles.scrollContent} 
+                    contentContainerStyle={[styles.scrollContent, { paddingBottom: 100 + insets.bottom }]} 
                     showsVerticalScrollIndicator={false}
                 >
                     {/* Header */}
@@ -117,7 +118,7 @@ export const CourierRequirementsScreen = ({ navigation }: any) => {
                 </ScrollView>
 
                 {/* Bottom Sticky Action Button */}
-                <View style={styles.footerContainer}>
+                <View style={[styles.footerContainer, { paddingBottom: Math.max(insets.bottom + 12, 16) }]}>
                     <TouchableOpacity
                         style={styles.actionBtn}
                         onPress={() => navigation.navigate('PersonalDetails')}
@@ -303,7 +304,7 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         paddingHorizontal: 20,
-        paddingBottom: Platform.OS === 'ios' ? 24 : 16,
+        paddingBottom: 16,
         paddingTop: 12,
         backgroundColor: 'rgba(15, 32, 39, 0.95)',
         borderTopWidth: 1,

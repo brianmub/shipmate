@@ -666,7 +666,9 @@ export const DriverActiveJobScreen = ({ navigation, route }: any) => {
                                             try {
                                                 setPingingGate(true);
                                                 const arrivalMsg = `Hi ${activeJob.recipient_name || 'there'}! I'm your ShipMate courier. I have arrived outside at your gate / door with your order.`;
-                                                await chatService.sendMessage(activeJob.id, user.id, arrivalMsg);
+                                                if (user?.id) {
+                                                    await chatService.sendMessage(activeJob.id, user.id, arrivalMsg);
+                                                }
                                                 alert('Arrival ping sent to customer via in-app chat! 🔔');
                                             } catch (err: any) {
                                                 console.warn('Arrival ping error:', err);
