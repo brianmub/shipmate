@@ -3,7 +3,7 @@
     "name": "Shipmate",
     "slug": "shipmate",
     "scheme": "shipmate",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -29,7 +29,7 @@
     },
     "android": {
       "package": "com.shipmate.shipmate",
-      "versionCode": 30,
+      "versionCode": 31,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
